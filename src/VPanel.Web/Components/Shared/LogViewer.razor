@@ -1,0 +1,42 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="vp-log" style="height:@Height" @ref="_el">
+    @if (string.IsNullOrEmpty(Text))
+    {
+        <span class="vp-log-empty">@EmptyText</span>
+    }
+    else
+    {
+        @foreach (var line in Lines)
+        {
+            <div class="@LineClass(line)">@line</div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string? Text { get; set; }
+    [Parameter] public string Height { get; set; } = "480px";
+    [Parameter] public string EmptyText { get; set; } = "No output yet.";
+    [Parameter] public bool AutoScroll { get; set; } = true;
+
+    private ElementReference _el;
+    private IEnumerable<string> Lines => (Text ?? "").TrimEnd('\n').Split('\n');
+
+    private static string LineClass(string line) =>
+        line.Contains("] ✖ ") ? "vp-log-line vp-log-error"
+        : line.Contains("] ⚠ ") ? "vp-log-line vp-log-warn"
+        : line.Contains("] ▶ ") ? "vp-log-line vp-log-step"
+        : "vp-log-line";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!AutoScroll) return;
+        try { await JS.InvokeVoidAsync("vpanel.scrollToBottom", _el); }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

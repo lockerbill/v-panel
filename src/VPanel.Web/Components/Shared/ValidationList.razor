@@ -1,0 +1,16 @@
+@if (Issues.Count > 0)
+{
+    <div class="vp-issues">
+        @foreach (var i in Issues)
+        {
+            <div class="@(i.IsWarning ? "vp-issue vp-issue-warn" : "vp-issue vp-issue-error")">
+                <MudIcon Icon="@(i.IsWarning ? Icons.Material.Outlined.WarningAmber : Icons.Material.Outlined.ErrorOutline)" Size="Size.Small" />
+                <span>@i</span>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<ValidationIssue> Issues { get; set; } = [];
+}

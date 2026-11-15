@@ -1,0 +1,35 @@
+@inject NavigationManager Nav
+
+<MudTable T="Deployment" Items="Items" Dense="true" Hover="true" Elevation="0" RowClass="vp-row-link" Breakpoint="Breakpoint.Sm"
+          OnRowClick="@(e => Nav.NavigateTo($"/deployments/{e.Item!.Id}"))">
+    <HeaderContent>
+        <MudTh>#</MudTh>
+        @if (ShowInstance) { <MudTh>Instance</MudTh> }
+        <MudTh>Action</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>By</MudTh>
+        <MudTh>Started</MudTh>
+        <MudTh>Duration</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="#" Class="vp-muted">@context.Id</MudTd>
+        @if (ShowInstance)
+        {
+            <MudTd DataLabel="Instance"><b>@context.Instance?.Name</b> <span class="vp-muted">@context.Instance?.App?.Name</span></MudTd>
+        }
+        <MudTd DataLabel="Action">@context.Action</MudTd>
+        <MudTd DataLabel="Status">
+            <DeploymentStatusChip Status="context.Status" />
+            @if (!string.IsNullOrEmpty(context.ErrorMessage)) { <div class="vp-small vp-error-text vp-ellipsis">@context.ErrorMessage</div> }
+        </MudTd>
+        <MudTd DataLabel="By">@context.TriggeredBy</MudTd>
+        <MudTd DataLabel="Started" Class="vp-nowrap vp-muted">@((context.StartedAt ?? context.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))</MudTd>
+        <MudTd DataLabel="Duration" Class="vp-muted">@(context.Duration is { } d ? $"{d.TotalSeconds:0.0}s" : "")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent><div class="vp-empty vp-empty-sm">No deployments yet.</div></NoRecordsContent>
+</MudTable>
+
+@code {
+    [Parameter] public IEnumerable<Deployment>? Items { get; set; }
+    [Parameter] public bool ShowInstance { get; set; } = true;
+}

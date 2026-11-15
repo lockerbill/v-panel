@@ -1,0 +1,121 @@
+@using BlazorMonaco
+@using BlazorMonaco.Editor
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="vp-editor @(ReadOnly ? "vp-editor-readonly" : "")" style="height:@Height">
+    @if (_monacoLoaded)
+    {
+        <StandaloneCodeEditor @ref="_editor" Id="@Id" ConstructionOptions="Options" OnDidInit="OnInitAsync"
+                              OnDidChangeModelContent="OnContentChangedAsync" CssClass="vp-editor-inner" />
+    }
+    else if (_loadError is not null)
+    {
+        <div class="vp-editor-fallback">@_loadError</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Language { get; set; } = "yaml";
+    [Parameter] public string Height { get; set; } = "440px";
+    [Parameter] public bool ReadOnly { get; set; }
+    [CascadingParameter(Name = "IsDark")] public bool IsDark { get; set; }
+
+    private StandaloneCodeEditor? _editor;
+    private string _current = "";
+    private bool _ready;
+    private bool? _appliedDark;
+    private bool _monacoLoaded;
+    private string? _loadError;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        // Monaco's AMD loader finishes asynchronously; on a full page load the circuit can be faster.
+        try
+        {
+            _monacoLoaded = await JS.InvokeAsync<bool>("vpanel.waitForMonaco", 15000);
+            if (!_monacoLoaded) _loadError = "The code editor failed to load. Reload the page.";
+            StateHasChanged();
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    private StandaloneEditorConstructionOptions Options(StandaloneCodeEditor editor) => new()
+    {
+        AutomaticLayout = true,
+        Language = Language,
+        Value = Value ?? "",
+        Theme = IsDark ? "vs-dark" : "vs",
+        Minimap = new EditorMinimapOptions { Enabled = false },
+        ScrollBeyondLastLine = false,
+        FontSize = 13,
+        FontFamily = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        TabSize = 2,
+        InsertSpaces = true,
+        DetectIndentation = false,
+        RenderWhitespace = "boundary",
+        ReadOnly = ReadOnly,
+        LineNumbersMinChars = 3,
+        Padding = new EditorPaddingOptions { Top = 8, Bottom = 8 },
+    };
+
+    private Task OnInitAsync()
+    {
+        _current = Value ?? "";
+        _ready = true;
+        _appliedDark = IsDark;
+        return Task.CompletedTask;
+    }
+
+    private async Task OnContentChangedAsync(ModelContentChangedEvent e)
+    {
+        if (_editor is null) return;
+        _current = await _editor.GetValue();
+        await ValueChanged.InvokeAsync(_current);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_ready || _editor is null) return;
+        if ((Value ?? "") != _current)
+        {
+            _current = Value ?? "";
+            await _editor.SetValue(_current);
+        }
+        if (_appliedDark != IsDark)
+        {
+            _appliedDark = IsDark;
+            await Global.SetTheme(JS, IsDark ? "vs-dark" : "vs");
+        }
+    }
+
+    /// <summary>Current editor text (use before saving to avoid racing the change event).</summary>
+    public async Task<string> GetValueAsync() => _editor is null || !_ready ? Value ?? "" : await _editor.GetValue();
+
+    public async Task SetMarkersAsync(IEnumerable<ValidationIssue> issues)
+    {
+        if (_editor is null || !_ready) return;
+        var model = await _editor.GetModel();
+        var markers = issues.Select(i => new MarkerData
+        {
+            Message = i.Message,
+            Severity = i.IsWarning ? MarkerSeverity.Warning : MarkerSeverity.Error,
+            StartLineNumber = i.Line ?? 1,
+            StartColumn = i.Column ?? 1,
+            EndLineNumber = i.Line ?? 1,
+            EndColumn = 1000,
+        }).ToList();
+        await Global.SetModelMarkers(JS, model, "vpanel", markers);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { if (_editor is not null) await _editor.DisposeEditor(); }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) { }
+    }
+}

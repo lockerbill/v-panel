@@ -1,0 +1,20 @@
+<MudExpansionPanels Elevation="0" Outlined="true" Class="vp-help">
+    <MudExpansionPanel Text="Variables injected by v-panel">
+        <MudText Typo="Typo.body2" Class="mb-2">
+            These are written at the top of the generated <code>.env</code> and can be used in <code>docker-compose.yml</code>
+            as <code>${NAME}</code>, or inside other env values (e.g. <code>DB_NAME=app_${VPANEL_INSTANCE}</code>).
+        </MudText>
+        <MudSimpleTable Dense="true" Elevation="0" Class="vp-simple-table">
+            <tbody>
+                <tr><td><code>VPANEL_INSTANCE</code></td><td>Instance slug, e.g. <code>procurement-01</code></td></tr>
+                <tr><td><code>VPANEL_INSTANCE_NAME</code></td><td>Instance display name</td></tr>
+                <tr><td><code>VPANEL_APP</code></td><td>App slug</td></tr>
+                <tr><td><code>VPANEL_PUBLIC_URL</code> / <code>VPANEL_HOST</code></td><td>Public URL and its host name</td></tr>
+                <tr><td><code>VPANEL_SHARED_NETWORK</code></td><td>Shared docker network (Caddy, Postgres)</td></tr>
+                <tr><td><code>VPANEL_INSTALL_PATH</code></td><td>Folder holding the compose file</td></tr>
+                <tr><td><code>VPANEL_PROXY_ALIAS</code></td><td>DNS name of the proxied service on the shared network</td></tr>
+                <tr><td><code>COMPOSE_PROJECT_NAME</code></td><td><code>vp-&lt;instance&gt;</code>; named volumes are prefixed with it, so each instance has its own data</td></tr>
+            </tbody>
+        </MudSimpleTable>
+    </MudExpansionPanel>
+</MudExpansionPanels>

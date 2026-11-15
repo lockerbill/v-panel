@@ -1,0 +1,136 @@
+@using VPanel.Core.Utilities
+@using VPanel.Infrastructure.Docker
+@inject SettingsService Settings
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="6">
+        <MudTextField @bind-Value="Model.Name" Label="Instance name" Variant="Variant.Outlined" Required="true" OnBlur="SuggestSlug"
+                      HelperText="e.g. procurement-01" />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudTextField @bind-Value="Model.Slug" Label="Slug" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="Locked"
+                      HelperText="@($"Compose project: vp-{Model.Slug}" + (Locked ? " (fixed after deploy)" : ""))" />
+    </MudItem>
+    <MudItem xs="12">
+        <MudTextField @bind-Value="Model.Description" Label="Description" Variant="Variant.Outlined" />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudTextField @bind-Value="Model.PublicUrl" Label="Public URL" Variant="Variant.Outlined" Class="vp-mono-input"
+                      Placeholder="https://procurement-01.example.com" HelperText="Caddy routes this host (and optional path) to the proxy service. Leave empty for internal-only apps." />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudTextField @bind-Value="Model.InstallPath" Label="Install folder" Variant="Variant.Outlined" Class="vp-mono-input"
+                      HelperText="@($"Must be inside {Settings.Get().AppsRoot}")" />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudAutocomplete T="string" @bind-Value="Model.ProxyService" Label="Proxy service" Variant="Variant.Outlined" Clearable="true" CoerceValue="true"
+                         SearchFunc="SearchServices" OpenOnFocus="true"
+                         Placeholder="@(Model.App?.DefaultProxyService is { } s ? $"{s} (app default)" : null)"
+                         HelperText="Compose service receiving HTTP traffic. Empty = app default." />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudNumericField T="int?" @bind-Value="Model.ProxyPort" Label="Proxy port" Variant="Variant.Outlined" Min="1" Max="65535" HideSpinButtons="true"
+                         Placeholder="@(Model.App?.DefaultProxyPort?.ToString() is { } p ? $"{p} (app default)" : null)"
+                         HelperText="Container port of the proxy service. Empty = app default." />
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudText Typo="Typo.subtitle1" Class="mb-1"><b>Environment overrides</b></MudText>
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">
+            Lines here replace the same keys from the app's <code>.env</code>; new keys are appended. Stored encrypted.
+        </MudText>
+        <CodeEditor @ref="_envEditor" Id="@($"{IdPrefix}-env")" Language="ini" @bind-Value="Model.EnvOverrides" Height="220px" />
+        <ManagedVariablesHelp />
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudSwitch T="bool" Value="_useComposeOverride" ValueChanged="ToggleComposeOverride" Color="Color.Primary"
+                   Label="Use a custom docker-compose.yml for this instance (instead of the app template)" />
+        @if (_useComposeOverride)
+        {
+            <CodeEditor @ref="_composeEditor" Id="@($"{IdPrefix}-compose")" Language="yaml" @bind-Value="Model.ComposeOverride" Height="420px" />
+        }
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudExpansionPanels Elevation="0" Outlined="true">
+            <MudExpansionPanel Text="Preview generated files" ExpandedChanged="OnPreviewToggled">
+                @if (_preview is not null)
+                {
+                    <MudText Typo="Typo.body2" Class="mb-1"><b>.env</b></MudText>
+                    <pre class="vp-pre">@_preview.Env</pre>
+                    @if (_preview.Override is not null)
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-1 mt-3"><b>docker-compose.vpanel.yml</b> <span class="vp-muted">(attaches the proxy service to the shared network)</span></MudText>
+                        <pre class="vp-pre">@_preview.Override</pre>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">No proxy override: the proxy service is not set or not found in the compose file.</MudText>
+                    }
+                    <ValidationList Issues="_preview.Analysis.Issues" />
+                }
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    </MudItem>
+</MudGrid>
+
+@code {
+    [Parameter, EditorRequired] public AppInstance Model { get; set; } = default!;
+    [Parameter] public string IdPrefix { get; set; } = "instance";
+
+    private CodeEditor? _envEditor;
+    private CodeEditor? _composeEditor;
+    private bool _useComposeOverride;
+    private RenderedInstance? _preview;
+    private int _initializedFor = -1;
+
+    private bool Locked => Model.DeployedConfigHash is not null && Model.Status != InstanceStatus.Removed;
+
+    protected override void OnParametersSet()
+    {
+        if (_initializedFor == Model.Id) return;
+        _initializedFor = Model.Id;
+        _useComposeOverride = Model.ComposeOverride is not null;
+    }
+
+    private void SuggestSlug()
+    {
+        if (Model.Id == 0 && !string.IsNullOrWhiteSpace(Model.Name))
+        {
+            var oldSlug = Model.Slug;
+            Model.Slug = Slug.From(Model.Name);
+            var root = Settings.Get().AppsRoot;
+            if (string.IsNullOrWhiteSpace(Model.InstallPath) || Model.InstallPath == Path.Combine(root, oldSlug))
+                Model.InstallPath = Path.Combine(root, Model.Slug);
+        }
+    }
+
+    private void ToggleComposeOverride(bool on)
+    {
+        _useComposeOverride = on;
+        Model.ComposeOverride = on ? Model.ComposeOverride ?? Model.App?.ComposeTemplate ?? "" : null;
+    }
+
+    private Task<IEnumerable<string>> SearchServices(string? text, CancellationToken ct)
+    {
+        var compose = Model.ComposeOverride ?? Model.App?.ComposeTemplate;
+        var names = ComposeAnalyzer.Analyze(compose).Services.Select(s => s.Name);
+        return Task.FromResult(string.IsNullOrWhiteSpace(text) ? names : names.Where(n => n.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private async Task OnPreviewToggled(bool expanded)
+    {
+        if (!expanded) return;
+        await SyncEditorsAsync();
+        _preview = ComposeRenderer.Render(Model, Settings.Get());
+    }
+
+    /// <summary>Copies the latest editor text into the model (call before saving).</summary>
+    public async Task SyncEditorsAsync()
+    {
+        if (_envEditor is not null) Model.EnvOverrides = await _envEditor.GetValueAsync();
+        if (_useComposeOverride && _composeEditor is not null) Model.ComposeOverride = await _composeEditor.GetValueAsync();
+        if (!_useComposeOverride) Model.ComposeOverride = null;
+    }
+}

@@ -1,0 +1,264 @@
+@page "/instances/{Id:int}"
+@implements IDisposable
+@inject InstanceService InstanceSvc
+@inject DeploymentService DeploySvc
+@inject AppTypeRegistry Registry
+@inject SettingsService Settings
+@inject DeploymentLogBus Bus
+@inject CurrentUser Me
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<PageTitle>@_instance?.Name · v-panel</PageTitle>
+
+@if (_instance is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+<PageHeader Title="@_instance.Name" Subtitle="@_instance.Description">
+    <Breadcrumbs>
+        <MudLink Href="/instances">Instances</MudLink> /
+        <MudLink Href="@($"/apps/{_instance.AppId}")">@_instance.App?.Name</MudLink>
+    </Breadcrumbs>
+    <Meta>
+        <div class="vp-meta">
+            <StatusChip Status="_instance.Status" />
+            @if (_dirty)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.Pending">changes not deployed</MudChip>
+            }
+            @if (!string.IsNullOrEmpty(_instance.PublicUrl))
+            {
+                <a class="vp-mono vp-small" href="@InstanceTable.Href(_instance.PublicUrl)" target="_blank" rel="noopener">
+                    @_instance.PublicUrl <MudIcon Icon="@Icons.Material.Outlined.OpenInNew" Style="font-size:14px" />
+                </a>
+            }
+        </div>
+    </Meta>
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.RocketLaunch" OnClick="() => RunAsync(DeploymentAction.Deploy)" Disabled="Busy">
+            @(_instance.DeployedConfigHash is null ? "Deploy" : "Redeploy")
+        </MudButton>
+        <MudMenu Icon="@Icons.Material.Filled.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Disabled="Busy" AriaLabel="More actions">
+            <MudMenuItem Icon="@Icons.Material.Outlined.PlayArrow" OnClick="() => RunAsync(DeploymentAction.Start)" Disabled="NotDeployed">Start</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.Stop" OnClick="() => RunAsync(DeploymentAction.Stop)" Disabled="NotDeployed">Stop</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.RestartAlt" OnClick="() => RunAsync(DeploymentAction.Restart)" Disabled="NotDeployed">Restart</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.ArrowDownward" OnClick="() => RunAsync(DeploymentAction.Down)" Disabled="NotDeployed">Down (stop &amp; remove containers)</MudMenuItem>
+            <MudDivider />
+            <MudMenuItem Icon="@Icons.Material.Outlined.LayersClear" OnClick="RemoveAsync" Disabled="NotDeployed">Remove deployment…</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.Delete" OnClick="DeleteAsync" Disabled="CanDelete == false">Delete instance</MudMenuItem>
+        </MudMenu>
+    </Actions>
+</PageHeader>
+
+@if (_errors.Count > 0)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Outlined" ShowCloseIcon="true" CloseIconClicked="() => _errors.Clear()">
+        @foreach (var e in _errors) { <div>@e</div> }
+    </MudAlert>
+}
+@if (!string.IsNullOrEmpty(_instance.StatusDetail) && _instance.Status is InstanceStatus.Failed or InstanceStatus.Partial)
+{
+    <MudAlert Severity="Severity.Warning" Class="mb-4" Variant="Variant.Outlined">@_instance.StatusDetail</MudAlert>
+}
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTabs Elevation="0" ApplyEffectsToContainer="true" TabPanelsClass="pa-5" @bind-ActivePanelIndex="_tab" Border="false">
+        <MudTabPanel Text="Overview" Icon="@Icons.Material.Outlined.Info">
+            <div class="vp-kv">
+                <div><span>App</span><MudLink Href="@($"/apps/{_instance.AppId}")">@_instance.App?.Name</MudLink></div>
+                <div><span>Compose project</span><code>@_instance.ProjectName</code></div>
+                <div><span>Install folder</span><code>@_instance.InstallPath</code></div>
+                <div><span>Proxy upstream</span><code>@(Upstream ?? "not routed")</code></div>
+                <div><span>Last deployed</span>@(_instance.LastDeployedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "never")</div>
+                <div><span>Server</span>@_instance.ServerId</div>
+            </div>
+
+            <div class="vp-card-header px-0 mt-4">
+                <MudText Typo="Typo.h6">
+                    @(_logDeployment is null ? "Deployment log" : $"{_logDeployment.Action} #{_logDeployment.Id}")
+                </MudText>
+                @if (_logDeployment is not null)
+                {
+                    <div class="d-flex gap-2 align-center">
+                        <DeploymentStatusChip Status="_logDeployment.Status" />
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Href="@($"/deployments/{_logDeployment.Id}")">Open</MudButton>
+                    </div>
+                }
+            </div>
+            @if (_logDeployment is null)
+            {
+                <div class="vp-empty vp-empty-sm">This instance has not been deployed yet. Review the configuration, then press <b>Deploy</b>.</div>
+            }
+            else
+            {
+                <LiveDeploymentLogView DeploymentId="_logDeployment.Id" Height="420px" Completed="OnJobCompletedAsync" />
+            }
+        </MudTabPanel>
+
+        <MudTabPanel Text="Configuration" Icon="@Icons.Material.Outlined.Tune">
+            <InstanceForm @ref="_form" Model="_edit!" IdPrefix="@($"instance-{Id}")" />
+            <div class="vp-form-actions">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Save" OnClick="() => SaveAsync(false)" Disabled="Busy">Save draft</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.RocketLaunch" OnClick="() => SaveAsync(true)" Disabled="Busy">Save &amp; deploy</MudButton>
+            </div>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Containers" Icon="@Icons.Material.Outlined.ViewInAr" OnClick="LoadContainersAsync">
+            <div class="vp-editor-toolbar">
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Containers labelled with compose project <code>@_instance.ProjectName</code>.</MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Refresh" OnClick="LoadContainersAsync">Refresh</MudButton>
+            </div>
+            <MudTable T="ContainerInfo" Items="_containers" Dense="true" Elevation="0" Loading="_loadingContainers" Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh>Service</MudTh><MudTh>Container</MudTh><MudTh>State</MudTh><MudTh>Status</MudTh><MudTh>Image</MudTh><MudTh>Ports</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Service"><b>@context.Service</b></MudTd>
+                    <MudTd DataLabel="Container" Class="vp-mono vp-small">@context.Name</MudTd>
+                    <MudTd DataLabel="State"><MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@(context.State == "running" ? Color.Success : Color.Default)">@context.State</MudChip></MudTd>
+                    <MudTd DataLabel="Status" Class="vp-muted">@context.Status</MudTd>
+                    <MudTd DataLabel="Image" Class="vp-mono vp-small">@context.Image</MudTd>
+                    <MudTd DataLabel="Ports" Class="vp-mono vp-small">@context.Ports</MudTd>
+                </RowTemplate>
+                <NoRecordsContent><div class="vp-empty vp-empty-sm">No containers.</div></NoRecordsContent>
+            </MudTable>
+        </MudTabPanel>
+
+        <MudTabPanel Text="Logs" Icon="@Icons.Material.Outlined.Article">
+            <ContainerLogs Instance="_instance" />
+        </MudTabPanel>
+
+        <MudTabPanel Text="History" Icon="@Icons.Material.Outlined.History">
+            <DeploymentTable Items="_history" ShowInstance="false" />
+        </MudTabPanel>
+    </MudTabs>
+</MudPaper>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [SupplyParameterFromQuery(Name = "deployment")] public int? DeploymentParam { get; set; }
+
+    private AppInstance? _instance;
+    private AppInstance? _edit;
+    private InstanceForm? _form;
+    private bool _dirty;
+    private List<string> _errors = [];
+    private List<Deployment> _history = [];
+    private Deployment? _logDeployment;
+    private IReadOnlyList<ContainerInfo> _containers = [];
+    private bool _loadingContainers;
+    private bool _working;
+    private int _tab;
+
+    private bool ActiveJob => _history.Any(d => d.Status is DeploymentStatus.Queued or DeploymentStatus.Running);
+    private bool Busy => _working || ActiveJob;
+    private bool NotDeployed => _instance?.DeployedConfigHash is null;
+    private bool CanDelete => _instance is { Status: InstanceStatus.Draft or InstanceStatus.Removed } || NotDeployed;
+    private string? Upstream => ProxyRouteService.RouteFor(_instance!) is { } r ? r.Upstream
+        : _instance!.EffectiveProxyService is { } s && _instance.EffectiveProxyPort is { } p ? $"{VPanel.Infrastructure.Docker.ComposeRenderer.ProxyAlias(_instance, s)}:{p} (after deploy)" : null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Bus.DeploymentChanged -= OnBusChanged;
+        Bus.DeploymentChanged += OnBusChanged;
+        await LoadAsync(resetEdit: true);
+    }
+
+    private async Task LoadAsync(bool resetEdit)
+    {
+        _instance = await InstanceSvc.GetAsync(Id);
+        if (_instance is null) { Nav.NavigateTo("/instances"); return; }
+        if (resetEdit || _edit is null) _edit = await InstanceSvc.GetAsync(Id);
+        _dirty = InstanceSvc.HasUndeployedChanges(_instance);
+        _history = await DeploySvc.ListAsync(Id, 50);
+        var targetId = DeploymentParam is { } p && _history.Any(h => h.Id == p) ? p : _history.FirstOrDefault()?.Id;
+        _logDeployment = targetId is null ? null : _history.First(h => h.Id == targetId);
+    }
+
+    private void OnBusChanged(int deploymentId)
+    {
+        if (deploymentId != 0 && _history.All(h => h.Id != deploymentId) && deploymentId < (_history.FirstOrDefault()?.Id ?? 0)) return;
+        InvokeAsync(async () => { await LoadAsync(resetEdit: false); StateHasChanged(); });
+    }
+
+    private async Task OnJobCompletedAsync()
+    {
+        await LoadAsync(resetEdit: false);
+        if (_logDeployment is { } d)
+        {
+            if (d.Status == DeploymentStatus.Succeeded) Snackbar.Add($"{d.Action} succeeded.", Severity.Success);
+            else if (d.Status == DeploymentStatus.Failed) Snackbar.Add($"{d.Action} failed: {d.ErrorMessage}", Severity.Error);
+        }
+        if (_tab == 2) await LoadContainersAsync();
+    }
+
+    private async Task RunAsync(DeploymentAction action, RemoveOptions? options = null)
+    {
+        _working = true;
+        try
+        {
+            var r = await DeploySvc.EnqueueAsync(Id, action, await Me.NameAsync(), options);
+            if (!r.Success) { _errors = r.Errors.ToList(); return; }
+            _errors.Clear();
+            DeploymentParam = r.Value!.Id;
+            await LoadAsync(resetEdit: false);
+            _tab = 0;
+            Nav.NavigateTo($"/instances/{Id}?deployment={r.Value.Id}", replace: true);
+        }
+        finally
+        {
+            _working = false;
+        }
+    }
+
+    private async Task SaveAsync(bool deploy)
+    {
+        _working = true;
+        try
+        {
+            if (_form is not null) await _form.SyncEditorsAsync();
+            var r = await InstanceSvc.SaveAsync(_edit!, await Me.NameAsync());
+            _errors = r.Errors.ToList();
+            if (!r.Success) return;
+            Snackbar.Add("Configuration saved.", Severity.Success);
+            await LoadAsync(resetEdit: true);
+        }
+        finally
+        {
+            _working = false;
+        }
+        if (deploy) await RunAsync(DeploymentAction.Deploy);
+    }
+
+    private async Task LoadContainersAsync()
+    {
+        _loadingContainers = true;
+        try { _containers = await Registry.Get(_instance!.App!.Type).GetContainersAsync(_instance, Settings.Get(), CancellationToken.None); }
+        finally { _loadingContainers = false; }
+    }
+
+    private async Task RemoveAsync()
+    {
+        var dialog = await Dialogs.ShowAsync<RemoveInstanceDialog>("Remove deployment",
+            new DialogParameters<RemoveInstanceDialog> { { x => x.InstanceName, _instance!.Name } },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        var result = await dialog.Result;
+        if (result is { Canceled: false, Data: RemoveOptions opts }) await RunAsync(DeploymentAction.Remove, opts);
+    }
+
+    private async Task DeleteAsync()
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync("Delete instance", $"Delete instance '{_instance!.Name}' and its deployment history?", yesText: "Delete", cancelText: "Cancel");
+        if (ok != true) return;
+        var r = await InstanceSvc.DeleteAsync(Id, await Me.NameAsync());
+        if (!r.Success) { _errors = r.Errors.ToList(); return; }
+        Snackbar.Add("Instance deleted.", Severity.Success);
+        Nav.NavigateTo($"/apps/{_instance.AppId}");
+    }
+
+    public void Dispose() => Bus.DeploymentChanged -= OnBusChanged;
+}

@@ -1,0 +1,232 @@
+@page "/settings"
+@using VPanel.Infrastructure.Docker
+@inject SettingsService SettingsSvc
+@inject UserService Users
+@inject AuditService Audit
+@inject IReverseProxyProvider Proxy
+@inject ProxyRouteService Routes
+@inject DockerCli Docker
+@inject CurrentUser Me
+@inject ISnackbar Snackbar
+
+<PageTitle>Settings · v-panel</PageTitle>
+
+<PageHeader Title="Settings" Subtitle="Server paths, shared docker network and reverse proxy." />
+
+@if (_errors.Count > 0)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Outlined">
+        @foreach (var e in _errors) { <div>@e</div> }
+    </MudAlert>
+}
+
+<MudGrid Spacing="4">
+    <MudItem xs="12" lg="8">
+        <MudPaper Outlined="true" Class="vp-card pa-5">
+            <MudText Typo="Typo.h6" Class="mb-3">Server</MudText>
+            <MudGrid Spacing="3">
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.AppsRoot" Label="Apps root folder" Variant="Variant.Outlined" Class="vp-mono-input"
+                                  HelperText="Instance install folders must live under this folder." />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.SharedNetwork" Label="Shared docker network" Variant="Variant.Outlined" Class="vp-mono-input"
+                                  HelperText="External network joined by Caddy, Postgres and proxied services." />
+                </MudItem>
+            </MudGrid>
+
+            <MudDivider Class="my-5" />
+            <div class="vp-card-header px-0 pt-0">
+                <MudText Typo="Typo.h6">Reverse proxy (Caddy)</MudText>
+                <MudSwitch T="bool" @bind-Value="_s.CaddyEnabled" Color="Color.Primary" Label="Manage Caddy routes" />
+            </div>
+            <MudGrid Spacing="3">
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.CaddyContainer" Label="Caddy container name" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="!_s.CaddyEnabled" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.CaddyDir" Label="Caddy config folder (host)" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="!_s.CaddyEnabled"
+                                  HelperText="Mounted into the Caddy container; v-panel writes sites/vp-*.caddy here." />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.CaddyConfigDirInContainer" Label="Config folder inside container" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="!_s.CaddyEnabled" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.PanelPublicUrl" Label="v-panel public URL (optional)" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="!_s.CaddyEnabled"
+                                  Placeholder="https://panel.example.com" HelperText="Adds a Caddy route to v-panel itself." />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_s.PanelUpstream" Label="v-panel upstream (seen from Caddy)" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="!_s.CaddyEnabled"
+                                  HelperText="v-panel must listen on an address reachable from containers." />
+                </MudItem>
+            </MudGrid>
+
+            <div class="vp-form-actions">
+                <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.Undo" OnClick="Reset">Reset to defaults</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Save" OnClick="SaveAsync" Disabled="_busy">Save settings</MudButton>
+            </div>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" lg="4">
+        <MudPaper Outlined="true" Class="vp-card pa-5 mb-4">
+            <MudText Typo="Typo.h6" Class="mb-3">Diagnostics</MudText>
+            <div class="d-flex flex-wrap gap-2">
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Inventory2" OnClick="CheckDockerAsync" Disabled="_busy">Check Docker</MudButton>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Lan" OnClick="CheckCaddyAsync" Disabled="_busy">Check Caddy</MudButton>
+                <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Sync" OnClick="SyncRoutesAsync" Disabled="_busy">Sync routes now</MudButton>
+            </div>
+            @if (_diag is not null)
+            {
+                <pre class="vp-pre mt-3">@_diag</pre>
+            }
+        </MudPaper>
+
+        <MudPaper Outlined="true" Class="vp-card pa-5" id="account">
+            <MudText Typo="Typo.h6" Class="mb-3">Change password</MudText>
+            <MudTextField @bind-Value="_currentPw" Label="Current password" InputType="InputType.Password" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2" />
+            <MudTextField @bind-Value="_newPw" Label="New password" InputType="InputType.Password" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2" />
+            <MudTextField @bind-Value="_confirmPw" Label="Confirm new password" InputType="InputType.Password" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="ChangePasswordAsync">Update password</MudButton>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Outlined="true" Class="vp-card vp-card-flush">
+            <div class="vp-card-header"><MudText Typo="Typo.h6">Audit log</MudText></div>
+            <MudSimpleTable Dense="true" Elevation="0" Class="vp-simple-table">
+                <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+                <tbody>
+                    @foreach (var a in _audit)
+                    {
+                        <tr>
+                            <td class="vp-nowrap vp-muted">@a.At.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</td>
+                            <td>@a.User</td>
+                            <td class="vp-mono vp-small">@a.Action</td>
+                            <td>@a.Target</td>
+                            <td class="vp-muted vp-small">@a.Detail</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private SettingsModel _s = new();
+    private List<string> _errors = [];
+    private List<AuditLog> _audit = [];
+    private string? _diag;
+    private bool _busy;
+    private string _currentPw = "", _newPw = "", _confirmPw = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        _s = SettingsModel.From(SettingsSvc.Get());
+        _audit = await Audit.RecentAsync(30);
+    }
+
+    private void Reset() => _s = SettingsModel.From(SettingsSvc.Defaults);
+
+    private async Task SaveAsync()
+    {
+        var settings = _s.ToSettings();
+        _errors = SettingsSvc.Validate(settings).ToList();
+        if (_errors.Count > 0) return;
+        _busy = true;
+        try
+        {
+            await SettingsSvc.SaveAsync(settings);
+            await Audit.LogAsync(await Me.NameAsync(), "settings.update");
+            if (settings.CaddyEnabled)
+            {
+                try { await Proxy.EnsureBootstrapAsync(settings, CancellationToken.None); }
+                catch (Exception ex) { _errors.Add($"Could not prepare Caddy folder: {ex.Message}"); }
+            }
+            Snackbar.Add("Settings saved.", Severity.Success);
+            _audit = await Audit.RecentAsync(30);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CheckDockerAsync()
+    {
+        _busy = true;
+        try
+        {
+            var r = await Docker.RunAsync(["version", "--format", "Docker {{.Server.Version}} (API {{.Server.APIVersion}}), client {{.Client.Version}}"], timeout: TimeSpan.FromSeconds(20));
+            var c = await Docker.RunAsync(["compose", "version", "--short"], timeout: TimeSpan.FromSeconds(20));
+            _diag = r.Success ? $"✔ {r.StdOut.Trim()}\n✔ docker compose {c.StdOut.Trim()}" : $"✖ {r.Combined.Trim()}";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CheckCaddyAsync()
+    {
+        _busy = true;
+        try
+        {
+            var (ok, msg) = await Proxy.CheckAsync(SettingsSvc.Get(), CancellationToken.None);
+            _diag = (ok ? "✔ " : "✖ ") + msg;
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task SyncRoutesAsync()
+    {
+        _busy = true;
+        try
+        {
+            var log = new StringLog();
+            var r = await Routes.SyncAsync(SettingsSvc.Get(), log, CancellationToken.None);
+            _diag = log.ToString() + (r.Success ? "✔ routes in sync" : $"✖ {r.Error}");
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ChangePasswordAsync()
+    {
+        if (_newPw != _confirmPw) { Snackbar.Add("New passwords do not match.", Severity.Error); return; }
+        var error = await Users.ChangePasswordAsync((await Me.NameAsync())!, _currentPw, _newPw);
+        if (error is not null) { Snackbar.Add(error, Severity.Error); return; }
+        _currentPw = _newPw = _confirmPw = "";
+        Snackbar.Add("Password updated.", Severity.Success);
+    }
+
+    private sealed class StringLog : IDeploymentLog
+    {
+        private readonly System.Text.StringBuilder _sb = new();
+        public void Info(string m) => _sb.Append("▶ ").Append(m).Append('\n');
+        public void Warn(string m) => _sb.Append("⚠ ").Append(m).Append('\n');
+        public void Error(string m) => _sb.Append("✖ ").Append(m).Append('\n');
+        public void Output(string l) => _sb.Append(l).Append('\n');
+        public override string ToString() => _sb.ToString();
+    }
+
+    /// <summary>Mutable form model for the immutable <see cref="VPanel.Core.Configuration.PanelSettings"/> record.</summary>
+    private sealed class SettingsModel
+    {
+        public string AppsRoot { get; set; } = "";
+        public string SharedNetwork { get; set; } = "";
+        public bool CaddyEnabled { get; set; }
+        public string CaddyContainer { get; set; } = "";
+        public string CaddyDir { get; set; } = "";
+        public string CaddyConfigDirInContainer { get; set; } = "";
+        public string? PanelPublicUrl { get; set; }
+        public string PanelUpstream { get; set; } = "";
+
+        public static SettingsModel From(VPanel.Core.Configuration.PanelSettings s) => new()
+        {
+            AppsRoot = s.AppsRoot, SharedNetwork = s.SharedNetwork, CaddyEnabled = s.CaddyEnabled, CaddyContainer = s.CaddyContainer,
+            CaddyDir = s.CaddyDir, CaddyConfigDirInContainer = s.CaddyConfigDirInContainer, PanelPublicUrl = s.PanelPublicUrl, PanelUpstream = s.PanelUpstream,
+        };
+
+        public VPanel.Core.Configuration.PanelSettings ToSettings() => new()
+        {
+            AppsRoot = AppsRoot.Trim(), SharedNetwork = SharedNetwork.Trim(), CaddyEnabled = CaddyEnabled, CaddyContainer = CaddyContainer.Trim(),
+            CaddyDir = CaddyDir.Trim(), CaddyConfigDirInContainer = CaddyConfigDirInContainer.Trim(),
+            PanelPublicUrl = string.IsNullOrWhiteSpace(PanelPublicUrl) ? null : PanelPublicUrl.Trim(), PanelUpstream = PanelUpstream.Trim(),
+        };
+    }
+}

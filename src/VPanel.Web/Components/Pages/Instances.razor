@@ -1,0 +1,64 @@
+@page "/instances"
+@implements IDisposable
+@inject InstanceService InstanceSvc
+@inject DeploymentLogBus Bus
+
+<PageTitle>Instances · v-panel</PageTitle>
+
+<PageHeader Title="Instances" Subtitle="Everything installed on this server through v-panel.">
+    <Actions>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Apps" Href="/apps">Pick an app to deploy</MudButton>
+    </Actions>
+</PageHeader>
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <div class="vp-filters">
+        <MudTextField @bind-Value="_search" Placeholder="Search" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Immediate="true"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="vp-search" Clearable="true" />
+        <MudSelect T="string" @bind-Value="_app" Label="App" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="vp-filter-select">
+            @foreach (var a in (_items ?? []).Select(i => i.Instance.App!.Name).Distinct().Order())
+            {
+                <MudSelectItem Value="a">@a</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="InstanceStatus?" @bind-Value="_status" Label="Status" Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true" Class="vp-filter-select">
+            @foreach (var s in Enum.GetValues<InstanceStatus>())
+            {
+                <MudSelectItem T="InstanceStatus?" Value="s">@StatusChip.Label(s)</MudSelectItem>
+            }
+        </MudSelect>
+    </div>
+    @if (_items is null)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <InstanceTable Items="_items" Filter="Matches" />
+    }
+</MudPaper>
+
+@code {
+    private List<InstanceSummary>? _items;
+    private string _search = "";
+    private string? _app;
+    private InstanceStatus? _status;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Bus.DeploymentChanged += OnChanged;
+        _items = await InstanceSvc.ListAsync();
+    }
+
+    private bool Matches(InstanceSummary s) =>
+        (_app is null || s.Instance.App?.Name == _app)
+        && (_status is null || s.Instance.Status == _status)
+        && (string.IsNullOrWhiteSpace(_search)
+            || s.Instance.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
+            || (s.Instance.PublicUrl?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (s.Instance.App?.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    private void OnChanged(int _) => InvokeAsync(async () => { _items = await InstanceSvc.ListAsync(); StateHasChanged(); });
+
+    public void Dispose() => Bus.DeploymentChanged -= OnChanged;
+}

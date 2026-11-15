@@ -1,0 +1,38 @@
+# Example: an app that uses the SHARED PostgreSQL container (from the shared-infra instance).
+# Each instance gets its own database + role (named after the instance), created by the
+# one-shot `db-init` service, and a web UI (pgweb) to browse it.
+services:
+  db-init:
+    image: postgres:17
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_ADMIN_USER}
+      PGPASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until pg_isready -q; do sleep 1; done
+        psql -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_roles WHERE rolname = '$$DB_USER'" | grep -q 1 \
+          || psql -v ON_ERROR_STOP=1 -c "CREATE ROLE \"$$DB_USER\" LOGIN PASSWORD '$$DB_PASSWORD'"
+        psql -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE datname = '$$DB_NAME'" | grep -q 1 \
+          || psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$$DB_NAME\" OWNER \"$$DB_USER\""
+    networks: [shared]
+
+  web:
+    image: sosedoff/pgweb
+    restart: unless-stopped
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      PGWEB_DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?sslmode=disable
+    networks: [default, shared]
+
+networks:
+  shared:
+    external: true
+    name: ${VPANEL_SHARED_NETWORK}

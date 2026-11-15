@@ -1,0 +1,69 @@
+@page "/setup"
+@using System.ComponentModel.DataAnnotations
+@inject UserService Users
+@inject AuditService Audit
+@inject NavigationManager Nav
+
+<PageTitle>Set up · v-panel</PageTitle>
+
+<h1 class="auth-title">Create the admin account</h1>
+<p class="auth-hint">This is the first start of v-panel. The account you create here manages this server.</p>
+
+@if (_error is not null)
+{
+    <div class="auth-error" role="alert">@_error</div>
+}
+
+<EditForm Model="Input" FormName="setup" method="post" OnValidSubmit="CreateAsync" Enhance="false">
+    <DataAnnotationsValidator />
+    <label class="auth-label" for="username">Username</label>
+    <InputText id="username" class="auth-input" @bind-Value="Input.Username" autocomplete="username" autofocus />
+    <ValidationMessage For="() => Input.Username" class="auth-validation" />
+
+    <label class="auth-label" for="password">Password</label>
+    <InputText id="password" type="password" class="auth-input" @bind-Value="Input.Password" autocomplete="new-password" />
+    <ValidationMessage For="() => Input.Password" class="auth-validation" />
+
+    <label class="auth-label" for="confirm">Confirm password</label>
+    <InputText id="confirm" type="password" class="auth-input" @bind-Value="Input.Confirm" autocomplete="new-password" />
+    <ValidationMessage For="() => Input.Confirm" class="auth-validation" />
+
+    <button type="submit" class="auth-button">Create account</button>
+</EditForm>
+
+@code {
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
+    [SupplyParameterFromForm] private SetupInput Input { get; set; } = default!;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Input ??= new();
+        if (await Users.AnyUsersAsync()) Nav.NavigateTo("login");
+    }
+
+    private async Task CreateAsync()
+    {
+        if (await Users.AnyUsersAsync())
+        {
+            Nav.NavigateTo("login");
+            return;
+        }
+        var (user, error) = await Users.CreateAsync(Input.Username, Input.Password);
+        if (user is null)
+        {
+            _error = error;
+            return;
+        }
+        await Audit.LogAsync(user.Username, "auth.setup");
+        await Login.SignInUserAsync(HttpContext, user);
+        Nav.NavigateTo("/", forceLoad: true);
+    }
+
+    public sealed class SetupInput
+    {
+        [Required, StringLength(64, MinimumLength = 3)] public string Username { get; set; } = "admin";
+        [Required, MinLength(UserService.MinPasswordLength, ErrorMessage = "Password must be at least 8 characters.")] public string Password { get; set; } = "";
+        [Required, Compare(nameof(Password), ErrorMessage = "Passwords do not match.")] public string Confirm { get; set; } = "";
+    }
+}

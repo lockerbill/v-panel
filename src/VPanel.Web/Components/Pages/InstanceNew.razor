@@ -1,0 +1,71 @@
+@page "/apps/{AppId:int}/instances/new"
+@inject InstanceService InstanceSvc
+@inject DeploymentService DeploySvc
+@inject CurrentUser Me
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>New instance · v-panel</PageTitle>
+
+@if (_model is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+<PageHeader Title="New instance" Subtitle="@($"Deploy {_model.App?.Name} with its own URL, folder and environment.")">
+    <Breadcrumbs><MudLink Href="/apps">Apps</MudLink> / <MudLink Href="@($"/apps/{AppId}")">@_model.App?.Slug</MudLink> / new instance</Breadcrumbs>
+    <Actions>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Save" OnClick="() => SaveAsync(false)" Disabled="_busy">Save draft</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.RocketLaunch" OnClick="() => SaveAsync(true)" Disabled="_busy">Save &amp; deploy</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_errors.Count > 0)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Outlined">
+        @foreach (var e in _errors) { <div>@e</div> }
+    </MudAlert>
+}
+
+<MudPaper Outlined="true" Class="vp-card pa-5">
+    <InstanceForm @ref="_form" Model="_model" IdPrefix="new-instance" />
+</MudPaper>
+
+@code {
+    [Parameter] public int AppId { get; set; }
+
+    private AppInstance? _model;
+    private InstanceForm? _form;
+    private List<string> _errors = [];
+    private bool _busy;
+
+    protected override async Task OnParametersSetAsync() => _model = await InstanceSvc.NewDraftAsync(AppId);
+
+    private async Task SaveAsync(bool deploy)
+    {
+        _busy = true;
+        try
+        {
+            if (_form is not null) await _form.SyncEditorsAsync();
+            var user = await Me.NameAsync();
+            var r = await InstanceSvc.SaveAsync(_model!, user);
+            _errors = r.Errors.ToList();
+            if (!r.Success) return;
+            var id = r.Value!.Id;
+            if (!deploy)
+            {
+                Snackbar.Add("Instance saved as draft.", Severity.Success);
+                Nav.NavigateTo($"/instances/{id}");
+                return;
+            }
+            var d = await DeploySvc.EnqueueAsync(id, DeploymentAction.Deploy, user);
+            if (!d.Success) { _errors = d.Errors.ToList(); return; }
+            Nav.NavigateTo($"/instances/{id}?deployment={d.Value!.Id}");
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

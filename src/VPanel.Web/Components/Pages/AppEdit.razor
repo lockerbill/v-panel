@@ -1,0 +1,293 @@
+@page "/apps/new"
+@page "/apps/{Id:int}"
+@using VPanel.Core.Utilities
+@using VPanel.Infrastructure.Docker
+@inject AppService AppSvc
+@inject InstanceService InstanceSvc
+@inject DeploymentService DeploySvc
+@inject AppTypeRegistry Registry
+@inject CurrentUser Me
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Nav
+
+<PageTitle>@(IsNew ? "New app" : _app?.Name) · v-panel</PageTitle>
+
+@if (_app is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+<PageHeader Title="@(IsNew ? "New app" : _app.Name)" Subtitle="@(IsNew ? "Define the template: compose file, environment and metadata. Saving keeps it as a draft; nothing is deployed." : _app.Description)">
+    <Breadcrumbs><MudLink Href="/apps">Apps</MudLink> / @(IsNew ? "New" : _app.Slug)</Breadcrumbs>
+    <Actions>
+        @if (!IsNew)
+        {
+            <MudButton Variant="Variant.Text" Color="Color.Error" StartIcon="@Icons.Material.Outlined.Delete" OnClick="DeleteAsync" Disabled="_busy">Delete</MudButton>
+        }
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Save" OnClick="() => SaveAsync(AfterSave.Stay)" Disabled="_busy">Save draft</MudButton>
+        @if (SingleInstance is { } single)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="() => SaveAsync(AfterSave.NewInstance)" Disabled="_busy">Save &amp; add instance</MudButton>
+            <MudTooltip Text="@($"Save the template and redeploy {single.Name}")">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.RocketLaunch" OnClick="() => SaveAsync(AfterSave.Deploy)" Disabled="_busy">Save &amp; deploy</MudButton>
+            </MudTooltip>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="() => SaveAsync(AfterSave.NewInstance)" Disabled="_busy">Save &amp; add instance</MudButton>
+        }
+    </Actions>
+</PageHeader>
+
+@if (_errors.Count > 0)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Outlined">
+        @foreach (var e in _errors) { <div>@e</div> }
+    </MudAlert>
+}
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTabs Elevation="0" ApplyEffectsToContainer="true" TabPanelsClass="pa-5" @bind-ActivePanelIndex="_tab" KeepPanelsAlive="true" Border="false">
+        <MudTabPanel Text="General" Icon="@Icons.Material.Outlined.Info">
+            <MudGrid Spacing="3">
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_app.Name" Label="Name" Variant="Variant.Outlined" Required="true" Immediate="true"
+                                  HelperText="Display name, e.g. Procurement" OnBlur="SuggestSlug" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudTextField @bind-Value="_app.Slug" Label="Slug" Variant="Variant.Outlined" Class="vp-mono-input"
+                                  HelperText="Lowercase id; instances are named <slug>-01, <slug>-02..." />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_app.Description" Label="Description" Variant="Variant.Outlined" Lines="2" Sizing="InputSizing.Auto" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudSelect T="AppType" @bind-Value="_app.Type" Label="App type" Variant="Variant.Outlined">
+                        @foreach (var t in Registry.SupportedTypes)
+                        {
+                            <MudSelectItem Value="t">@(t == AppType.DockerCompose ? "Docker Compose" : t.ToString())</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudAutocomplete T="string" @bind-Value="_app.DefaultProxyService" Label="Default proxy service" Variant="Variant.Outlined"
+                                     SearchFunc="SearchServices" CoerceValue="true" Clearable="true" OpenOnFocus="true"
+                                     HelperText="Compose service that receives HTTP traffic" />
+                </MudItem>
+                <MudItem xs="12" md="4">
+                    <MudNumericField T="int?" @bind-Value="_app.DefaultProxyPort" Label="Default proxy port" Variant="Variant.Outlined" Min="1" Max="65535"
+                                     HelperText="Port the service listens on inside the container" HideSpinButtons="true" />
+                </MudItem>
+            </MudGrid>
+        </MudTabPanel>
+
+        <MudTabPanel Text="docker-compose.yml" Icon="@Icons.Material.Outlined.Inventory2" BadgeData="@(ComposeErrorCount > 0 ? ComposeErrorCount : null)" BadgeColor="Color.Error">
+            <div class="vp-editor-toolbar">
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Shared by all instances. Use <code>${VAR}</code> for per-instance values; named volumes are created automatically per instance.
+                </MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.FactCheck" OnClick="ValidateAsync">Validate</MudButton>
+            </div>
+            <CodeEditor @ref="_composeEditor" Id="compose-editor" Language="yaml" @bind-Value="_app.ComposeTemplate" Height="520px" />
+            <ValidationList Issues="_issues" />
+        </MudTabPanel>
+
+        <MudTabPanel Text=".env" Icon="@Icons.Material.Outlined.Key">
+            <div class="vp-editor-toolbar">
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Default environment written to <code>.env</code> next to the compose file. Instances can override any line. Stored encrypted.
+                </MudText>
+            </div>
+            <CodeEditor @ref="_envEditor" Id="env-editor" Language="ini" @bind-Value="_app.EnvTemplate" Height="360px" />
+            <ManagedVariablesHelp />
+        </MudTabPanel>
+
+        <MudTabPanel Text="Volumes" Icon="@Icons.Material.Outlined.Storage" OnClick="RefreshAnalysis">
+            <MudText Typo="Typo.subtitle1" Class="mb-1"><b>Detected in compose</b></MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-3">
+                Named volumes are created by docker compose and prefixed with the instance project (<code>vp-&lt;instance&gt;_name</code>), so every instance keeps separate data.
+                External volumes are created by v-panel if missing. Relative bind folders are created inside the install folder.
+            </MudText>
+            @if (_analysis is null || _analysis.Volumes.Count == 0)
+            {
+                <div class="vp-empty vp-empty-sm">No volumes found in the compose file.</div>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Elevation="0" Class="vp-simple-table mb-5">
+                    <thead><tr><th>Name / source</th><th>Kind</th><th>Service</th><th>Mount</th></tr></thead>
+                    <tbody>
+                        @foreach (var v in _analysis.Volumes)
+                        {
+                            <tr>
+                                <td class="vp-mono">@v.Name</td>
+                                <td><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@v.Kind</MudChip></td>
+                                <td>@v.Service</td>
+                                <td class="vp-mono">@v.Target</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+
+            <div class="vp-card-header px-0">
+                <div>
+                    <MudText Typo="Typo.subtitle1"><b>Declared manually</b></MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Extra external volumes (e.g. shared between apps) that v-panel should create before deploy.</MudText>
+                </div>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddVolume">Add volume</MudButton>
+            </div>
+            @foreach (var v in _app.Volumes)
+            {
+                <div class="vp-volume-row">
+                    <MudTextField @bind-Value="v.Name" Label="Docker volume name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="vp-mono-input" />
+                    <MudTextField @bind-Value="v.Description" Label="Description" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" OnClick="() => _app.Volumes.Remove(v)" aria-label="Remove volume" />
+                </div>
+            }
+        </MudTabPanel>
+
+        @if (!IsNew)
+        {
+            <MudTabPanel Text="Instances" Icon="@Icons.Material.Outlined.Dns" BadgeData="@(_instances.Count > 0 ? _instances.Count : null)" BadgeColor="Color.Primary">
+                <div class="vp-card-header px-0 pt-0">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Each instance is a separate compose project with its own URL, folder, env overrides and data.</MudText>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Href="@($"/apps/{_app.Id}/instances/new")">New instance</MudButton>
+                </div>
+                <InstanceTable Items="_instances" ShowApp="false" />
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudPaper>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private enum AfterSave { Stay, NewInstance, Deploy }
+
+    private AppDefinition? _app;
+    private List<InstanceSummary> _instances = [];
+    private CodeEditor? _composeEditor;
+    private CodeEditor? _envEditor;
+    private List<string> _errors = [];
+    private IReadOnlyList<ValidationIssue> _issues = [];
+    private ComposeAnalysis? _analysis;
+    private bool _busy;
+    private int _tab;
+    private bool _slugTouched;
+
+    private bool IsNew => Id is null;
+    private int ComposeErrorCount => _issues.Count(i => !i.IsWarning);
+    private AppInstance? SingleInstance => _instances.Count == 1 ? _instances[0].Instance : null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (IsNew)
+        {
+            _app = new AppDefinition
+            {
+                Type = AppType.DockerCompose,
+                ComposeTemplate = "services:\n  web:\n    image: nginx:alpine\n    restart: unless-stopped\n    volumes:\n      - data:/usr/share/nginx/html\n\nvolumes:\n  data:\n",
+                EnvTemplate = "# KEY=value\n",
+                DefaultProxyService = "web",
+                DefaultProxyPort = 80,
+            };
+        }
+        else
+        {
+            _app = await AppSvc.GetAsync(Id!.Value);
+            if (_app is null) { Nav.NavigateTo("/apps"); return; }
+            _slugTouched = true;
+            _instances = await InstanceSvc.ListAsync(_app.Id);
+        }
+        RefreshAnalysis();
+    }
+
+    private void SuggestSlug()
+    {
+        if (IsNew && (!_slugTouched || string.IsNullOrEmpty(_app!.Slug))) _app!.Slug = Slug.From(_app.Name);
+    }
+
+    private void RefreshAnalysis()
+    {
+        var env = EnvFile.Parse(_app!.EnvTemplate).ToDictionary();
+        _analysis = ComposeAnalyzer.Analyze(_app.ComposeTemplate, env);
+    }
+
+    private Task<IEnumerable<string>> SearchServices(string? text, CancellationToken ct)
+    {
+        RefreshAnalysis();
+        var names = _analysis?.Services.Select(s => s.Name) ?? [];
+        return Task.FromResult(string.IsNullOrWhiteSpace(text) ? names : names.Where(n => n.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private async Task SyncEditorsAsync()
+    {
+        if (_composeEditor is not null) _app!.ComposeTemplate = await _composeEditor.GetValueAsync();
+        if (_envEditor is not null) _app!.EnvTemplate = await _envEditor.GetValueAsync();
+    }
+
+    private async Task ValidateAsync()
+    {
+        await SyncEditorsAsync();
+        _issues = Registry.Get(_app!.Type).Validate(_app.ComposeTemplate, _app.EnvTemplate).Issues;
+        RefreshAnalysis();
+        if (_composeEditor is not null) await _composeEditor.SetMarkersAsync(_issues);
+        if (_issues.Count == 0) Snackbar.Add("Compose file looks valid.", Severity.Success);
+    }
+
+    private void AddVolume() => _app!.Volumes.Add(new AppVolume { Kind = VolumeKind.External });
+
+    private async Task SaveAsync(AfterSave next)
+    {
+        _busy = true;
+        try
+        {
+            await SyncEditorsAsync();
+            SuggestSlug();
+            _issues = Registry.Get(_app!.Type).Validate(_app.ComposeTemplate, _app.EnvTemplate).Issues;
+            if (_composeEditor is not null) await _composeEditor.SetMarkersAsync(_issues);
+            var result = await AppSvc.SaveAsync(_app, await Me.NameAsync());
+            _errors = result.Errors.ToList();
+            if (!result.Success) return;
+
+            var id = result.Value!.Id;
+            var invalid = _issues.Any(i => !i.IsWarning);
+            Snackbar.Add(invalid ? "Saved as draft. The compose file has errors; fix them before deploying." : "App saved.", invalid ? Severity.Warning : Severity.Success);
+
+            switch (next)
+            {
+                case AfterSave.NewInstance:
+                    Nav.NavigateTo($"/apps/{id}/instances/new");
+                    return;
+                case AfterSave.Deploy when SingleInstance is { } inst:
+                    if (invalid) return;
+                    var d = await DeploySvc.EnqueueAsync(inst.Id, DeploymentAction.Deploy, await Me.NameAsync());
+                    if (!d.Success) { _errors = d.Errors.ToList(); return; }
+                    Nav.NavigateTo($"/instances/{inst.Id}?deployment={d.Value!.Id}");
+                    return;
+                default:
+                    if (IsNew) Nav.NavigateTo($"/apps/{id}", replace: true);
+                    else _app = await AppSvc.GetAsync(id);
+                    break;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        var ok = await Dialogs.ShowMessageBoxAsync("Delete app", $"Delete app '{_app!.Name}'? This only removes the template; delete its instances first.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (ok != true) return;
+        var r = await AppSvc.DeleteAsync(_app.Id, await Me.NameAsync());
+        if (!r.Success) { _errors = r.Errors.ToList(); return; }
+        Snackbar.Add("App deleted.", Severity.Success);
+        Nav.NavigateTo("/apps");
+    }
+}

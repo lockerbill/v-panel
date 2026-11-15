@@ -1,0 +1,46 @@
+@inject NavigationManager Nav
+
+<MudTable T="InstanceSummary" Items="Items" Hover="true" Dense="true" Elevation="0" OnRowClick="@(e => Nav.NavigateTo($"/instances/{e.Item!.Instance.Id}"))"
+          RowClass="vp-row-link" Breakpoint="Breakpoint.Sm" Filter="Filter">
+    <HeaderContent>
+        <MudTh>Instance</MudTh>
+        @if (ShowApp) { <MudTh>App</MudTh> }
+        <MudTh>Status</MudTh>
+        <MudTh>Public URL</MudTh>
+        <MudTh>Folder</MudTh>
+        <MudTh>Last deploy</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Instance">
+            <b>@context.Instance.Name</b>
+            <div class="vp-muted vp-mono vp-small">@context.Instance.ProjectName</div>
+        </MudTd>
+        @if (ShowApp) { <MudTd DataLabel="App">@context.Instance.App?.Name</MudTd> }
+        <MudTd DataLabel="Status">
+            <StatusChip Status="context.Instance.Status" />
+            @if (context.HasUndeployedChanges)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">changes not deployed</MudChip>
+            }
+        </MudTd>
+        <MudTd DataLabel="Public URL" Class="vp-mono vp-ellipsis">
+            @if (!string.IsNullOrEmpty(context.Instance.PublicUrl))
+            {
+                <a href="@Href(context.Instance.PublicUrl)" target="_blank" rel="noopener" @onclick:stopPropagation="true">@context.Instance.PublicUrl</a>
+            }
+        </MudTd>
+        <MudTd DataLabel="Folder" Class="vp-mono vp-small vp-ellipsis">@context.Instance.InstallPath</MudTd>
+        <MudTd DataLabel="Last deploy" Class="vp-muted vp-nowrap">@(context.Instance.LastDeployedAt is { } t ? Pages.Dashboard.Ago(t) : "never")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <div class="vp-empty">No instances.</div>
+    </NoRecordsContent>
+</MudTable>
+
+@code {
+    [Parameter] public IEnumerable<InstanceSummary>? Items { get; set; }
+    [Parameter] public bool ShowApp { get; set; } = true;
+    [Parameter] public Func<InstanceSummary, bool>? Filter { get; set; }
+
+    internal static string Href(string url) => url.Contains("://") ? url : "https://" + url;
+}
