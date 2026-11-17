@@ -16,6 +16,19 @@ Browser ──HTTPS──> Caddy (container dùng chung) ──> v-panel (host, 
    /opt/vpanel/apps/<instance>/{docker-compose.yml,.env,docker-compose.vpanel.yml}
 ```
 
+## Chế độ chạy
+
+| | Docker (khuyến nghị) | systemd |
+|---|---|---|
+| Cách chạy | Container `vpanel` (`Dockerfile`, `deploy/docker-compose.yml`) | Binary self-contained, service `vpanel` (`deploy/install.sh`) |
+| Điều khiển Docker | Docker CLI và plugin compose nằm trong image, gọi host qua `/var/run/docker.sock` được mount vào | Docker CLI của host, user `vpanel` thuộc group `docker` |
+| Dữ liệu | `/opt/vpanel/data` | `/var/lib/vpanel` |
+| Caddy gọi v-panel | `vpanel:8080` qua network `vpanel-shared` | `host.docker.internal:5080`, v-panel bind thêm IP `docker0` |
+
+Ở chế độ container, `/opt/vpanel` phải được mount **cùng đường dẫn** bên trong và bên ngoài. v-panel ghi file compose vào đó, còn Docker daemon trên host đọc các đường dẫn bind mount và `--project-directory` theo đường dẫn host. Container v-panel không phải một instance (tên project không có tiền tố `vp-`), nên v-panel không thể tự stop hay remove chính nó.
+
+Image được build đa kiến trúc (amd64/arm64): stage SDK chạy native rồi cross-publish bằng `-a $TARGETARCH`, còn stage runtime không có lệnh `RUN` nào.
+
 ## Project
 
 | Project | Vai trò |
