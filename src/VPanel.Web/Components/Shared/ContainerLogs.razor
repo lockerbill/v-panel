@@ -1,0 +1,91 @@
+@implements IDisposable
+@inject AppTypeRegistry Registry
+@inject SettingsService Settings
+
+<div class="vp-editor-toolbar">
+    <div class="d-flex gap-2 align-center">
+        <MudSelect T="int" @bind-Value="_tail" Label="Lines" Variant="Variant.Outlined" Margin="Margin.Dense" Class="vp-filter-select-sm">
+            <MudSelectItem Value="100">100</MudSelectItem>
+            <MudSelectItem Value="500">500</MudSelectItem>
+            <MudSelectItem Value="2000">2000</MudSelectItem>
+        </MudSelect>
+        @if (_cts is null)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="StartAsync">Follow logs</MudButton>
+        }
+        else
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Stop" OnClick="Stop">Stop following</MudButton>
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+        }
+    </div>
+    <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Outlined.ClearAll" OnClick="Clear">Clear</MudButton>
+</div>
+<LogViewer Text="@_text" Height="520px" EmptyText="Press 'Follow logs' to stream container output." />
+
+@code {
+    [Parameter, EditorRequired] public AppInstance Instance { get; set; } = default!;
+
+    private const int MaxLines = 5000;
+    private readonly LinkedList<string> _lines = new();
+    private readonly object _gate = new();
+    private string? _text;
+    private int _tail = 200;
+    private CancellationTokenSource? _cts;
+    private Timer? _timer;
+    private volatile bool _dirty;
+
+    private async Task StartAsync()
+    {
+        Stop();
+        Clear();
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+        _timer = new Timer(_ => Flush(), null, 300, 300);
+        var handler = Registry.Get(Instance.App!.Type);
+        _ = Task.Run(async () =>
+        {
+            try { await handler.StreamLogsAsync(Instance, Settings.Get(), _tail, follow: true, OnLine, token); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { OnLine($"(log stream error: {ex.Message})"); }
+            finally { await InvokeAsync(() => { if (_cts?.Token == token) { _cts = null; } Flush(force: true); StateHasChanged(); }); }
+        });
+        await Task.CompletedTask;
+    }
+
+    private void OnLine(string line)
+    {
+        lock (_gate)
+        {
+            _lines.AddLast(line);
+            while (_lines.Count > MaxLines) _lines.RemoveFirst();
+        }
+        _dirty = true;
+    }
+
+    private void Flush(bool force = false)
+    {
+        if (!_dirty && !force) return;
+        _dirty = false;
+        string text;
+        lock (_gate) text = string.Join('\n', _lines);
+        InvokeAsync(() => { _text = text; StateHasChanged(); });
+    }
+
+    private void Stop()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
+        _timer?.Dispose();
+        _timer = null;
+    }
+
+    private void Clear()
+    {
+        lock (_gate) _lines.Clear();
+        _text = null;
+    }
+
+    public void Dispose() => Stop();
+}

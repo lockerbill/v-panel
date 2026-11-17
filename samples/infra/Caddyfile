@@ -1,0 +1,7 @@
+# Main Caddyfile (v-panel creates this at /opt/vpanel/caddy/Caddyfile if missing).
+# v-panel writes one file per site into ./sites; files named vp-*.caddy are managed and regenerated.
+{
+	# email admin@example.com
+}
+
+import /etc/caddy/sites/*.caddy

@@ -1,0 +1,107 @@
+@implements IDisposable
+@inject DeploymentLogBus Bus
+@inject DeploymentService Deployments
+
+<LogViewer Text="@_text" Height="@Height" EmptyText="@_emptyText" />
+
+@code {
+    [Parameter, EditorRequired] public int DeploymentId { get; set; }
+    [Parameter] public string Height { get; set; } = "480px";
+    /// <summary>Raised when the job finishes while this view is open.</summary>
+    [Parameter] public EventCallback Completed { get; set; }
+
+    private LiveDeploymentLog? _live;
+    private string? _text;
+    private string _emptyText = "Loading…";
+    private int _attachedId;
+    private Timer? _timer;
+    private volatile bool _dirty;
+    private bool _subscribed;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_subscribed)
+        {
+            Bus.DeploymentChanged += OnBusChanged;
+            _subscribed = true;
+        }
+        if (_attachedId == DeploymentId) return;
+        DetachLive();
+        _attachedId = DeploymentId;
+        _text = null;
+        if (!TryAttachLive()) await ReloadAsync();
+    }
+
+    private bool TryAttachLive()
+    {
+        var live = Bus.TryGet(DeploymentId);
+        if (live is null) return false;
+        _live = live;
+        _live.LineAdded += OnLine;
+        _live.Completed += OnCompleted;
+        _text = _live.Text;
+        _emptyText = "Waiting for output…";
+        _timer = new Timer(_ => Flush(), null, 250, 250);
+        return true;
+    }
+
+    private void OnBusChanged(int id)
+    {
+        if (id != DeploymentId || _live is not null) return;
+        InvokeAsync(async () =>
+        {
+            if (_live is not null) return;
+            if (!TryAttachLive()) await ReloadAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void OnLine(string _) => _dirty = true;
+
+    private void Flush()
+    {
+        if (!_dirty || _live is null) return;
+        _dirty = false;
+        var text = _live.Text;
+        InvokeAsync(() => { _text = text; StateHasChanged(); });
+    }
+
+    private void OnCompleted() => InvokeAsync(async () =>
+    {
+        DetachLive();
+        await ReloadAsync();
+        StateHasChanged();
+        await Completed.InvokeAsync();
+    });
+
+    private async Task ReloadAsync()
+    {
+        var d = await Deployments.GetAsync(DeploymentId);
+        if (d is null) { _emptyText = "Deployment not found."; return; }
+        if (!string.IsNullOrEmpty(d.Log)) _text = d.Log;
+        _emptyText = d.Status switch
+        {
+            DeploymentStatus.Queued => "Queued, waiting for a worker…",
+            DeploymentStatus.Running => "Running…",
+            _ => "No log recorded.",
+        };
+    }
+
+    private void DetachLive()
+    {
+        if (_live is not null)
+        {
+            _live.LineAdded -= OnLine;
+            _live.Completed -= OnCompleted;
+        }
+        _live = null;
+        _timer?.Dispose();
+        _timer = null;
+    }
+
+    public void Dispose()
+    {
+        DetachLive();
+        Bus.DeploymentChanged -= OnBusChanged;
+    }
+}

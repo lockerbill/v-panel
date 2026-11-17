@@ -1,0 +1,32 @@
+<MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="ColorOf(Status)" Icon="@IconOf(Status)" Class="vp-status-chip">@Label(Status)</MudChip>
+
+@code {
+    [Parameter] public InstanceStatus Status { get; set; }
+
+    public static Color ColorOf(InstanceStatus s) => s switch
+    {
+        InstanceStatus.Running => Color.Success,
+        InstanceStatus.Deploying => Color.Info,
+        InstanceStatus.Failed => Color.Error,
+        InstanceStatus.Partial => Color.Warning,
+        InstanceStatus.Stopped => Color.Secondary,
+        _ => Color.Default,
+    };
+
+    public static string IconOf(InstanceStatus s) => s switch
+    {
+        InstanceStatus.Running => Icons.Material.Filled.CheckCircle,
+        InstanceStatus.Deploying => Icons.Material.Filled.Sync,
+        InstanceStatus.Failed => Icons.Material.Filled.Error,
+        InstanceStatus.Partial => Icons.Material.Filled.Warning,
+        InstanceStatus.Stopped => Icons.Material.Filled.StopCircle,
+        InstanceStatus.Removed => Icons.Material.Outlined.DeleteOutline,
+        _ => Icons.Material.Outlined.EditNote,
+    };
+
+    public static string Label(InstanceStatus s) => s switch
+    {
+        InstanceStatus.Partial => "Partially running",
+        _ => s.ToString(),
+    };
+}

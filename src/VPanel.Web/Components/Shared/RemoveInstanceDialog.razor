@@ -1,0 +1,26 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Remove '@InstanceName'?</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Runs <code>docker compose down</code> and removes the public route. The instance definition is kept, so you can deploy it again.
+        </MudText>
+        <MudCheckBox T="bool" @bind-Value="_deleteVolumes" Color="Color.Error" Label="Also delete named volumes (all data of this instance)" />
+        <MudCheckBox T="bool" @bind-Value="_deleteFiles" Color="Color.Error" Label="Also delete the install folder" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Error" Variant="Variant.Filled" OnClick="Confirm">Remove</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string InstanceName { get; set; } = "";
+
+    private bool _deleteVolumes;
+    private bool _deleteFiles;
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(new RemoveOptions(_deleteVolumes, _deleteFiles)));
+}

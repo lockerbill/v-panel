@@ -1,0 +1,139 @@
+@page "/"
+@implements IDisposable
+@inject AppService Apps
+@inject InstanceService Instances
+@inject DeploymentService Deployments
+@inject DeploymentLogBus Bus
+@inject DockerHealth Docker
+@inject NavigationManager Nav
+
+<PageTitle>Dashboard · v-panel</PageTitle>
+
+<PageHeader Title="Dashboard" Subtitle="Apps and instances managed on this server.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="/apps/new">New app</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_instances is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    @if (_infra is { Status: InstanceStatus.Draft })
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4"
+                  ContentAlignment="HorizontalAlignment.Left">
+            <b>Get started:</b> deploy the <MudLink Href="@($"/instances/{_infra.Id}")">shared infrastructure</MudLink> instance first.
+            It starts Caddy (reverse proxy with automatic HTTPS) and PostgreSQL, which other apps can use.
+        </MudAlert>
+    }
+
+    <div class="vp-stats">
+        <div class="vp-stat"><span class="vp-stat-value">@_appCount</span><span class="vp-stat-label">Apps</span></div>
+        <div class="vp-stat"><span class="vp-stat-value">@_instances.Count</span><span class="vp-stat-label">Instances</span></div>
+        <div class="vp-stat"><span class="vp-stat-value vp-ok">@Count(InstanceStatus.Running)</span><span class="vp-stat-label">Running</span></div>
+        <div class="vp-stat"><span class="vp-stat-value vp-bad">@(Count(InstanceStatus.Failed) + Count(InstanceStatus.Partial))</span><span class="vp-stat-label">Need attention</span></div>
+        <div class="vp-stat"><span class="vp-stat-value">@Count(InstanceStatus.Draft)</span><span class="vp-stat-label">Drafts</span></div>
+        <div class="vp-stat">
+            <span class="vp-stat-value @(Docker.Reachable == false ? "vp-bad" : "vp-ok")">@(Docker.Reachable switch { true => "OK", false => "Down", _ => "…" })</span>
+            <span class="vp-stat-label">Docker</span>
+        </div>
+    </div>
+
+    <MudGrid Spacing="4" Class="mt-1">
+        <MudItem xs="12" lg="7">
+            <MudPaper Outlined="true" Class="vp-card">
+                <div class="vp-card-header">
+                    <MudText Typo="Typo.h6">Instances</MudText>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Href="/instances" EndIcon="@Icons.Material.Filled.ChevronRight">All instances</MudButton>
+                </div>
+                @if (_instances.Count == 0)
+                {
+                    <div class="vp-empty">No instances yet. Create an app, then add an instance to deploy it.</div>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true" Elevation="0" Class="vp-simple-table">
+                        <thead><tr><th>Instance</th><th>App</th><th>Status</th><th>URL</th></tr></thead>
+                        <tbody>
+                            @foreach (var s in _instances.Take(10))
+                            {
+                                <tr class="vp-row-link" @onclick="@(() => Nav.NavigateTo($"/instances/{s.Instance.Id}"))">
+                                    <td><b>@s.Instance.Name</b></td>
+                                    <td>@s.Instance.App?.Name</td>
+                                    <td><StatusChip Status="s.Instance.Status" />@if (s.HasUndeployedChanges) { <MudTooltip Text="Configuration changed since last deploy"><MudIcon Icon="@Icons.Material.Filled.Circle" Color="Color.Warning" Style="font-size:10px" /></MudTooltip> }</td>
+                                    <td class="vp-mono vp-ellipsis">@s.Instance.PublicUrl</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" lg="5">
+            <MudPaper Outlined="true" Class="vp-card">
+                <div class="vp-card-header">
+                    <MudText Typo="Typo.h6">Recent deployments</MudText>
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Href="/deployments" EndIcon="@Icons.Material.Filled.ChevronRight">History</MudButton>
+                </div>
+                @if (_deployments!.Count == 0)
+                {
+                    <div class="vp-empty">Nothing deployed yet.</div>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true" Elevation="0" Class="vp-simple-table">
+                        <tbody>
+                            @foreach (var d in _deployments)
+                            {
+                                <tr class="vp-row-link" @onclick="@(() => Nav.NavigateTo($"/deployments/{d.Id}"))">
+                                    <td><DeploymentStatusChip Status="d.Status" /></td>
+                                    <td><b>@d.Action</b> @d.Instance?.Name</td>
+                                    <td class="vp-muted vp-nowrap">@Ago(d.CreatedAt)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    private List<InstanceSummary>? _instances;
+    private List<Deployment>? _deployments;
+    private AppInstance? _infra;
+    private int _appCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Bus.DeploymentChanged += OnChanged;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _appCount = (await Apps.ListAsync()).Count;
+        _instances = await Instances.ListAsync();
+        _deployments = await Deployments.ListAsync(take: 8);
+        _infra = _instances.Select(i => i.Instance).FirstOrDefault(i => i.App?.IsSystem == true);
+    }
+
+    private int Count(InstanceStatus s) => _instances?.Count(i => i.Instance.Status == s) ?? 0;
+
+    private void OnChanged(int _) => InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+
+    internal static string Ago(DateTimeOffset t)
+    {
+        var d = DateTimeOffset.UtcNow - t;
+        return d.TotalSeconds < 60 ? "just now"
+            : d.TotalMinutes < 60 ? $"{(int)d.TotalMinutes}m ago"
+            : d.TotalHours < 24 ? $"{(int)d.TotalHours}h ago"
+            : t.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    }
+
+    public void Dispose() => Bus.DeploymentChanged -= OnChanged;
+}

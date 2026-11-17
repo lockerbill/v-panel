@@ -1,0 +1,22 @@
+@page "/Error"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@layout AccountLayout
+@using System.Diagnostics
+
+<PageTitle>Error · v-panel</PageTitle>
+
+<h1 class="auth-title">Something went wrong</h1>
+<p class="auth-hint">An error occurred while processing your request. Check the v-panel logs (<code>journalctl -u vpanel</code>).</p>
+@if (RequestId is not null)
+{
+    <p class="auth-hint">Request ID: <code>@RequestId</code></p>
+}
+<a class="auth-button" href="/">Back to dashboard</a>
+
+@code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() => RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

@@ -1,0 +1,13 @@
+# Example app: a tiny HTTP server that echoes request info.
+# Each instance gets its own compose project (vp-<instance>), so the same template can be deployed many times.
+services:
+  web:
+    image: traefik/whoami
+    restart: unless-stopped
+    environment:
+      WHOAMI_NAME: ${VPANEL_INSTANCE}
+    volumes:
+      - data:/data
+
+volumes:
+  data:

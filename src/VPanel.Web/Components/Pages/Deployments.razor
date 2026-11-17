@@ -1,0 +1,33 @@
+@page "/deployments"
+@implements IDisposable
+@inject DeploymentService DeploySvc
+@inject DeploymentLogBus Bus
+
+<PageTitle>Deployments · v-panel</PageTitle>
+
+<PageHeader Title="Deployments" Subtitle="Every deploy, start, stop and remove job with its log." />
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    @if (_items is null)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <DeploymentTable Items="_items" />
+    }
+</MudPaper>
+
+@code {
+    private List<Deployment>? _items;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Bus.DeploymentChanged += OnChanged;
+        _items = await DeploySvc.ListAsync(take: 200);
+    }
+
+    private void OnChanged(int _) => InvokeAsync(async () => { _items = await DeploySvc.ListAsync(take: 200); StateHasChanged(); });
+
+    public void Dispose() => Bus.DeploymentChanged -= OnChanged;
+}

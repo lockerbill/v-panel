@@ -1,0 +1,23 @@
+<MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="ColorOf(Status)" Icon="@IconOf(Status)" Class="vp-status-chip">@Status</MudChip>
+
+@code {
+    [Parameter] public DeploymentStatus Status { get; set; }
+
+    private static Color ColorOf(DeploymentStatus s) => s switch
+    {
+        DeploymentStatus.Succeeded => Color.Success,
+        DeploymentStatus.Failed => Color.Error,
+        DeploymentStatus.Running => Color.Info,
+        DeploymentStatus.Queued => Color.Secondary,
+        _ => Color.Default,
+    };
+
+    private static string IconOf(DeploymentStatus s) => s switch
+    {
+        DeploymentStatus.Succeeded => Icons.Material.Filled.CheckCircle,
+        DeploymentStatus.Failed => Icons.Material.Filled.Error,
+        DeploymentStatus.Running => Icons.Material.Filled.Sync,
+        DeploymentStatus.Queued => Icons.Material.Outlined.Schedule,
+        _ => Icons.Material.Outlined.Block,
+    };
+}

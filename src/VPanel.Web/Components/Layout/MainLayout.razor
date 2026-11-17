@@ -1,0 +1,88 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject DockerHealth Docker
+@inject IJSRuntime JS
+
+<MudThemeProvider @ref="_themeProvider" Theme="VPanelTheme.Theme" IsDarkMode="_dark" />
+<MudPopoverProvider />
+<MudDialogProvider CloseOnEscapeKey="true" />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Dense="true" Class="vp-appbar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawer = !_drawer" aria-label="Toggle navigation" />
+        <a href="/" class="vp-brand"><span class="vp-logo">v</span>v-panel</a>
+        <MudSpacer />
+        @if (Docker.Reachable == false)
+        {
+            <MudTooltip Text="@Docker.Message">
+                <MudChip T="string" Color="Color.Error" Size="Size.Small" Icon="@Icons.Material.Filled.ErrorOutline">Docker unreachable</MudChip>
+            </MudTooltip>
+        }
+        <MudTooltip Text="@(_dark ? "Light mode" : "Dark mode")">
+            <MudIconButton Icon="@(_dark ? Icons.Material.Outlined.LightMode : Icons.Material.Outlined.DarkMode)" Color="Color.Inherit" OnClick="ToggleDarkAsync" aria-label="Toggle dark mode" />
+        </MudTooltip>
+        <AuthorizeView Context="auth">
+            <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Dense="true">
+                <ActivatorContent>
+                    <MudChip T="string" Variant="Variant.Text" Icon="@Icons.Material.Outlined.AccountCircle" Class="ml-1">@auth.User.Identity?.Name</MudChip>
+                </ActivatorContent>
+                <ChildContent>
+                    <MudMenuItem Href="/settings#account" Icon="@Icons.Material.Outlined.Key">Change password</MudMenuItem>
+                    <form method="post" action="logout" class="vp-logout-form">
+                        <AntiforgeryToken />
+                        <button type="submit" class="vp-logout-button">
+                            <MudIcon Icon="@Icons.Material.Outlined.Logout" Size="Size.Small" /> Sign out
+                        </button>
+                    </form>
+                </ChildContent>
+            </MudMenu>
+        </AuthorizeView>
+    </MudAppBar>
+    <MudDrawer @bind-Open="_drawer" ClipMode="DrawerClipMode.Always" Variant="DrawerVariant.Responsive" Elevation="0" Class="vp-drawer">
+        <NavMenu />
+    </MudDrawer>
+    <MudMainContent>
+        <CascadingValue Value="_dark" Name="IsDark">
+            <div class="vp-content">
+                @Body
+            </div>
+        </CascadingValue>
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private MudThemeProvider? _themeProvider;
+    private bool _drawer = true;
+    private bool _dark;
+
+    protected override void OnInitialized() => Docker.Changed += OnDockerChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var stored = await JS.InvokeAsync<string?>("vpanel.getPref", "theme");
+            _dark = stored is null ? await JS.InvokeAsync<bool>("vpanel.prefersDark") : stored == "dark";
+            StateHasChanged();
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    private async Task ToggleDarkAsync()
+    {
+        _dark = !_dark;
+        await JS.InvokeVoidAsync("vpanel.setPref", "theme", _dark ? "dark" : "light");
+    }
+
+    private void OnDockerChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Docker.Changed -= OnDockerChanged;
+}

@@ -1,0 +1,25 @@
+[Unit]
+Description=v-panel - self-hosted server admin panel
+Documentation=https://github.com/lockerbill/v-panel
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=notify
+User=vpanel
+Group=vpanel
+SupplementaryGroups=docker
+WorkingDirectory=/opt/vpanel/app
+ExecStart=/opt/vpanel/app/VPanel.Web
+EnvironmentFile=-/etc/vpanel/vpanel.env
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_NOLOGO=1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

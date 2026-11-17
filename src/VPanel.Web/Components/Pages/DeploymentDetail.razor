@@ -1,0 +1,51 @@
+@page "/deployments/{Id:int}"
+@inject DeploymentService DeploySvc
+
+<PageTitle>Deployment #@Id · v-panel</PageTitle>
+
+@if (_d is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    return;
+}
+
+<PageHeader Title="@($"{_d.Action} #{_d.Id}")" Subtitle="@_d.ErrorMessage">
+    <Breadcrumbs>
+        <MudLink Href="/deployments">Deployments</MudLink> /
+        <MudLink Href="@($"/instances/{_d.InstanceId}")">@_d.Instance?.Name</MudLink>
+    </Breadcrumbs>
+    <Meta>
+        <div class="vp-meta">
+            <DeploymentStatusChip Status="_d.Status" />
+            <span class="vp-muted vp-small">by @_d.TriggeredBy · @((_d.StartedAt ?? _d.CreatedAt).ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"))@(_d.Duration is { } t ? $" · {t.TotalSeconds:0.0}s" : "")</span>
+        </div>
+    </Meta>
+</PageHeader>
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTabs Elevation="0" ApplyEffectsToContainer="true" TabPanelsClass="pa-5" Border="false">
+        <MudTabPanel Text="Log" Icon="@Icons.Material.Outlined.Article">
+            <LiveDeploymentLogView DeploymentId="Id" Height="600px" Completed="ReloadAsync" />
+        </MudTabPanel>
+        @if (_d.ComposeSnapshot is not null)
+        {
+            <MudTabPanel Text="docker-compose.yml" Icon="@Icons.Material.Outlined.Inventory2">
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">Compose file as deployed by this job.</MudText>
+                <pre class="vp-pre vp-pre-tall">@_d.ComposeSnapshot</pre>
+            </MudTabPanel>
+            <MudTabPanel Text=".env" Icon="@Icons.Material.Outlined.Key">
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-2">Environment as deployed by this job.</MudText>
+                <pre class="vp-pre vp-pre-tall">@_d.EnvSnapshot</pre>
+            </MudTabPanel>
+        }
+    </MudTabs>
+</MudPaper>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    private Deployment? _d;
+
+    protected override Task OnParametersSetAsync() => ReloadAsync();
+
+    private async Task ReloadAsync() => _d = await DeploySvc.GetAsync(Id);
+}

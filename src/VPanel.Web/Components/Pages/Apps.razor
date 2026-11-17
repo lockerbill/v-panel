@@ -1,0 +1,55 @@
+@page "/apps"
+@inject AppService AppSvc
+@inject NavigationManager Nav
+
+<PageTitle>Apps · v-panel</PageTitle>
+
+<PageHeader Title="Apps" Subtitle="An app is a template (docker compose + .env). Each app can be deployed as several instances.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="/apps/new">New app</MudButton>
+    </Actions>
+</PageHeader>
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTable T="AppSummary" Items="_apps" Hover="true" Dense="true" Elevation="0" Loading="_apps is null" Filter="Matches"
+              OnRowClick="@(e => Nav.NavigateTo($"/apps/{e.Item!.App.Id}"))" RowClass="vp-row-link" Breakpoint="Breakpoint.Sm">
+        <ToolBarContent>
+            <MudTextField @bind-Value="_search" Placeholder="Search apps" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          Immediate="true" Variant="Variant.Outlined" Margin="Margin.Dense" Class="vp-search" Clearable="true" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Type</MudTh>
+            <MudTh>Instances</MudTh>
+            <MudTh>Updated</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">
+                <div class="vp-cell-title">
+                    <b>@context.App.Name</b>
+                    @if (context.App.IsSystem) { <MudChip T="string" Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Outlined">system</MudChip> }
+                </div>
+                <div class="vp-muted vp-ellipsis">@context.App.Description</div>
+            </MudTd>
+            <MudTd DataLabel="Type"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.Inventory2">Docker Compose</MudChip></MudTd>
+            <MudTd DataLabel="Instances">@context.InstanceCount <span class="vp-muted">(@context.RunningCount running)</span></MudTd>
+            <MudTd DataLabel="Updated" Class="vp-muted vp-nowrap">@Dashboard.Ago(context.App.UpdatedAt)</MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <div class="vp-empty">No apps yet. <MudLink Href="/apps/new">Create your first app</MudLink>.</div>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private List<AppSummary>? _apps;
+    private string _search = "";
+
+    protected override async Task OnInitializedAsync() => _apps = await AppSvc.ListAsync();
+
+    private bool Matches(AppSummary a) =>
+        string.IsNullOrWhiteSpace(_search)
+        || a.App.Name.Contains(_search, StringComparison.OrdinalIgnoreCase)
+        || a.App.Slug.Contains(_search, StringComparison.OrdinalIgnoreCase)
+        || (a.App.Description?.Contains(_search, StringComparison.OrdinalIgnoreCase) ?? false);
+}
