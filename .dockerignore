@@ -1,0 +1,11 @@
+**/bin/
+**/obj/
+**/.data/
+**/node_modules/
+publish/
+tests/
+.git/
+.github/
+.vs/
+.vscode/
+*.md

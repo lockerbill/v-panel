@@ -1,0 +1,33 @@
+# Runs v-panel itself as a container (recommended installation).
+#   sudo ./deploy/docker-install.sh          # or the manual steps in README.md
+#
+# v-panel manages the host's Docker through the socket, so:
+#  - /opt/vpanel MUST be mounted at the SAME path inside the container: compose files written there
+#    are executed by the host's Docker daemon, which resolves bind mounts with host paths.
+#  - access to docker.sock is root-equivalent: keep port 5080 on localhost and expose the panel
+#    only through Caddy (HTTPS) via Settings > v-panel public URL.
+name: vpanel
+
+services:
+  vpanel:
+    image: ghcr.io/lockerbill/v-panel:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: vpanel
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/vpanel:/opt/vpanel
+    environment:
+      # Upstream used for the panel's own Caddy route (Caddy reaches v-panel on the shared network).
+      VPanel__Defaults__PanelUpstream: vpanel:8080
+    networks:
+      - shared
+
+networks:
+  shared:
+    external: true
+    name: vpanel-shared
