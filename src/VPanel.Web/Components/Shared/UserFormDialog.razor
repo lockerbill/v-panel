@@ -1,0 +1,52 @@
+@* Create a user, or set a new password for an existing one (when Username is given). *@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsReset ? $"Reset password for '{Username}'" : "New user")</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_error is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-3">@_error</MudAlert>
+        }
+        @if (!IsReset)
+        {
+            <MudTextField @bind-Value="_username" Label="Username" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3"
+                          AutoFocus="true" HelperText="3-64 characters." />
+        }
+        <MudTextField @bind-Value="_password" Label="Password" InputType="InputType.Password" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3"
+                      AutoFocus="IsReset" HelperText="@($"At least {UserService.MinPasswordLength} characters.")" />
+        <MudTextField @bind-Value="_confirm" Label="Confirm password" InputType="InputType.Password" Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitAsync" Disabled="_busy">@(IsReset ? "Set password" : "Create user")</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string? Username { get; set; }
+
+    /// <summary>Validates and saves; returns an error message or null on success.</summary>
+    [Parameter] public Func<string, string, Task<string?>> OnSubmit { get; set; } = default!;
+
+    private bool IsReset => !string.IsNullOrEmpty(Username);
+    private string _username = "";
+    private string _password = "";
+    private string _confirm = "";
+    private string? _error;
+    private bool _busy;
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (_password != _confirm) { _error = "Passwords do not match."; return; }
+        _busy = true;
+        try
+        {
+            _error = await OnSubmit(IsReset ? Username! : _username, _password);
+            if (_error is null) MudDialog.Close(DialogResult.Ok(true));
+        }
+        finally { _busy = false; }
+    }
+}

@@ -3,7 +3,7 @@
 # one-shot `db-init` service, and a web UI (pgweb) to browse it.
 services:
   db-init:
-    image: postgres:17
+    image: postgres:18
     restart: "no"
     environment:
       PGHOST: postgres

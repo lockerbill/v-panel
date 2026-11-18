@@ -35,6 +35,7 @@ fi
 echo
 echo "v-panel is running on 127.0.0.1:5080 (container 'vpanel')."
 echo "Open it through an SSH tunnel:  ssh -L 5080:127.0.0.1:5080 <user>@<server>   then http://localhost:5080"
-echo "First visit creates the admin account. Then deploy 'shared-infra' (Caddy + Postgres) and set"
+echo "Create the admin account on first visit, or from the shell:  docker exec -it vpanel vpanel create-admin"
+echo "Then deploy 'shared-infra' (Caddy + PostgreSQL 18) and set"
 echo "Settings > v-panel public URL to expose the panel over HTTPS."
 echo "Logs: docker logs -f vpanel     Backup: everything lives in $ROOT"

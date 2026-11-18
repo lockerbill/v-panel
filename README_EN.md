@@ -7,7 +7,7 @@ v-panel is a self-hosted admin panel for managing applications on a VPS. You ins
 - Define an **app**: name, description, type, and the `docker-compose.yml` and `.env` contents, edited in an IDE-like editor (Monaco).
 - **Save draft** only stores the metadata. **Deploy** makes the engine run the real `docker compose`, with the log streamed live on screen.
 - One app can run as several **instances** (`procurement-01`, `procurement-02`...). Each instance has its own URL, install folder, `.env` overrides and data (volumes).
-- Shared containers (**Caddy** + **PostgreSQL**) are an app too, managed from v-panel itself. On deploy, Caddy is configured automatically from the instance's *Public URL* (with automatic HTTPS).
+- Shared containers (**Caddy** + **PostgreSQL 18**) are an app too, managed from v-panel itself. On deploy, Caddy is configured automatically from the instance's *Public URL* (with automatic HTTPS).
 - Deployment history with configuration snapshots, container list, container logs, start/stop/restart/remove and an audit log.
 
 Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco.
@@ -55,11 +55,11 @@ First access goes through an SSH tunnel:
 ssh -L 5080:127.0.0.1:5080 user@server
 ```
 
-Open http://localhost:5080 and create the admin account.
+Open http://localhost:5080 and create the admin account. You can also create it from the shell, see [Users and the admin account](#users-and-the-admin-account).
 
 Then:
 
-1. Deploy the **shared-infra** instance to start Caddy (ports 80/443) and PostgreSQL. The Postgres password is generated randomly; view and change it in the `.env` tab of the *Shared infrastructure* app.
+1. Deploy the **shared-infra** instance to start Caddy (ports 80/443) and PostgreSQL 18. The Postgres password is generated randomly; view and change it in the `.env` tab of the *Shared infrastructure* app.
 2. Go to **Settings → v-panel public URL** and enter e.g. `https://panel.example.com` to reach the panel over HTTPS. Caddy reaches v-panel on the shared network at `vpanel:8080`.
 3. Create an app, add an instance, fill in its Public URL and press **Deploy**.
 
@@ -95,6 +95,59 @@ The [`.github/workflows/ci.yml`](.github/workflows/ci.yml) workflow runs the tes
 - a `v1.2.3` tag produces the `1.2.3` and `1.2` tags.
 
 The GHCR package starts out private. Make it public in its *Package settings*, or run `docker login ghcr.io` on the server.
+
+## Users and the admin account
+
+- **First visit:** the `/setup` page creates the first admin account. It locks itself once any user exists.
+- **Users page** (left menu): list users, create new users, reset passwords and delete users. You cannot delete yourself or the last user. A deleted user is signed out on their next request. Every user is an administrator.
+- **Change your own password:** *Settings → Change password*.
+
+To create an admin or reset a password from the server shell (for example before opening the panel, or after losing a password):
+
+```bash
+docker exec -it vpanel vpanel create-admin
+```
+
+```bash
+docker exec -it vpanel vpanel reset-password --username admin
+```
+
+The command asks for the username (default `admin`) and the password (hidden). In scripts, pass the password on stdin:
+
+```bash
+echo 'a-strong-password' | docker exec -i vpanel vpanel create-admin --username alice --password-stdin
+```
+
+Without a terminal (`docker exec` without `-it`), `create-admin` generates a random password and prints it once. For the systemd install use `sudo -u vpanel /opt/vpanel/app/VPanel.Web create-admin`. Run `vpanel help` for all options.
+
+## Shared PostgreSQL (version 18)
+
+The **shared-infra** instance runs `postgres:18`. Since version 18 the official image stores data in `/var/lib/postgresql/18/docker`, so the volume is mounted at `/var/lib/postgresql` instead of `/var/lib/postgresql/data`.
+
+**Upgrading an existing install that runs PostgreSQL 17.** The template already stored in v-panel is not changed automatically, because version 18 cannot read version 17 data files. To move to 18:
+
+1. Dump all data:
+
+   ```bash
+   docker exec postgres pg_dumpall -U postgres > pg17-dump.sql
+   ```
+
+2. In v-panel, open the *Shared infrastructure* app and edit the compose file: `image: postgres:18`, volume `postgres_data:/var/lib/postgresql`.
+3. Stop the instance and remove the old volume (you dumped it in step 1):
+
+   ```bash
+   docker compose -p vp-shared-infra down
+   ```
+
+   ```bash
+   docker volume rm vp-shared-infra_postgres_data
+   ```
+
+4. **Deploy** the *shared-infra* instance, wait until Postgres is healthy, then restore:
+
+   ```bash
+   docker exec -i postgres psql -U postgres < pg17-dump.sql
+   ```
 
 ## Alternative: run with systemd
 
@@ -172,6 +225,10 @@ dotnet tool restore
 
 ```bash
 dotnet run --project src/VPanel.Web          # http://localhost:5080, data in src/VPanel.Web/.data
+```
+
+```bash
+dotnet run --project src/VPanel.Web -- create-admin   # create an admin in the dev data
 ```
 
 ```bash
