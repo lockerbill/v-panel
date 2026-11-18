@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Every compiler/analyzer warning fails the build, locally, in CI and in the Docker image build. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

@@ -69,7 +69,8 @@ public static class AdminCommands
           sudo -u vpanel /opt/vpanel/app/VPanel.Web create-admin      (systemd install)
         """;
 
-    public static async Task<int> RunAsync(IServiceProvider services, Invocation inv, CliConsole io)
+    /// <summary>Runs an invocation that needs no services (<see cref="IsStandalone"/>): usage errors and <c>help</c>.</summary>
+    public static int RunStandalone(Invocation inv, CliConsole io)
     {
         if (inv.Error is not null)
         {
@@ -82,6 +83,12 @@ public static class AdminCommands
             io.Out.WriteLine(Usage);
             return 0;
         }
+        throw new InvalidOperationException($"Command '{inv.Command}' needs services; use RunAsync.");
+    }
+
+    public static async Task<int> RunAsync(IServiceProvider services, Invocation inv, CliConsole io)
+    {
+        if (IsStandalone(inv)) return RunStandalone(inv, io);
         await using var scope = services.CreateAsyncScope();
         var users = scope.ServiceProvider.GetRequiredService<UserService>();
         var audit = scope.ServiceProvider.GetRequiredService<AuditService>();

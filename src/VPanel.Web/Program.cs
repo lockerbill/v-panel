@@ -15,7 +15,7 @@ using VPanel.Web.Components;
 var command = AdminCommands.IsCommand(args) ? AdminCommands.Parse(args) : null;
 if (command is not null && AdminCommands.IsStandalone(command))
 {
-    Environment.ExitCode = await AdminCommands.RunAsync(new ServiceCollection().BuildServiceProvider(), command, new CliConsole());
+    Environment.ExitCode = AdminCommands.RunStandalone(command, new CliConsole());
     return;
 }
 

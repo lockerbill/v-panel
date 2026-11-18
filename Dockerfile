@@ -9,7 +9,7 @@ WORKDIR /src
 # Restore first so most packages are cached until a csproj changes. Publish restores again once the
 # sources are present: Razor-dependent implicit packages (e.g. the one providing blazor.web.js) are
 # only resolved when .razor files exist, so do NOT publish with --no-restore.
-COPY VPanel.sln ./
+COPY VPanel.sln Directory.Build.props ./
 COPY src/VPanel.Core/VPanel.Core.csproj src/VPanel.Core/
 COPY src/VPanel.Infrastructure/VPanel.Infrastructure.csproj src/VPanel.Infrastructure/
 COPY src/VPanel.Web/VPanel.Web.csproj src/VPanel.Web/
