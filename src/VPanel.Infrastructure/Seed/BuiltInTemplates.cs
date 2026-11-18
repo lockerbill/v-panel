@@ -9,7 +9,8 @@ public static class BuiltInTemplates
         # Shared infrastructure managed by v-panel.
         #  - caddy:    reverse proxy + automatic HTTPS. v-panel writes site files into ${VPANEL_CADDY_DIR}/sites
         #              and reloads Caddy on every deploy.
-        #  - postgres: shared PostgreSQL. Apps reach it at host "postgres" on the shared network.
+        #  - postgres: shared PostgreSQL 18. Apps reach it at host "postgres" on the shared network.
+        #              PG18 keeps its data under /var/lib/postgresql/18/docker, so the volume is mounted at /var/lib/postgresql.
         # Both join the external network ${VPANEL_SHARED_NETWORK}; app services proxied by v-panel join it too.
         services:
           caddy:
@@ -29,14 +30,14 @@ public static class BuiltInTemplates
             networks: [shared]
 
           postgres:
-            image: postgres:17
+            image: postgres:18
             container_name: postgres
             restart: unless-stopped
             environment:
               POSTGRES_USER: ${POSTGRES_USER}
               POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
             volumes:
-              - postgres_data:/var/lib/postgresql/data
+              - postgres_data:/var/lib/postgresql
             healthcheck:
               test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
               interval: 10s

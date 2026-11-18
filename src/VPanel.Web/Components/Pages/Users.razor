@@ -1,0 +1,107 @@
+@page "/users"
+@inject UserService UserSvc
+@inject AuditService Audit
+@inject CurrentUser Me
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Users · v-panel</PageTitle>
+
+<PageHeader Title="Users" Subtitle="Accounts that can sign in to this panel. Every user is an administrator.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PersonAdd" OnClick="CreateAsync">New user</MudButton>
+    </Actions>
+</PageHeader>
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTable T="User" Items="_users" Hover="true" Dense="true" Elevation="0" Loading="_users is null" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>Username</MudTh>
+            <MudTh>Role</MudTh>
+            <MudTh>Created</MudTh>
+            <MudTh>Last sign-in</MudTh>
+            <MudTh Style="text-align:right">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Username">
+                <div class="vp-cell-title">
+                    <b>@context.Username</b>
+                    @if (IsMe(context)) { <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">you</MudChip> }
+                </div>
+            </MudTd>
+            <MudTd DataLabel="Role">@context.Role</MudTd>
+            <MudTd DataLabel="Created" Class="vp-muted vp-nowrap">@Dashboard.Ago(context.CreatedAt)</MudTd>
+            <MudTd DataLabel="Last sign-in" Class="vp-muted vp-nowrap">@(context.LastLoginAt is { } t ? Dashboard.Ago(t) : "never")</MudTd>
+            <MudTd DataLabel="Actions" Style="text-align:right" Class="vp-nowrap">
+                <MudTooltip Text="Reset password">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Key" Size="Size.Small" OnClick="() => ResetAsync(context)" aria-label="@($"Reset password for {context.Username}")" />
+                </MudTooltip>
+                <MudTooltip Text="@(IsMe(context) ? "You cannot delete your own account" : "Delete user")">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" Color="Color.Error" Disabled="IsMe(context)"
+                                   OnClick="() => DeleteAsync(context)" aria-label="@($"Delete {context.Username}")" />
+                </MudTooltip>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private List<User>? _users;
+    private string? _me;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _me = await Me.NameAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _users = await UserSvc.ListAsync();
+
+    private bool IsMe(User u) => string.Equals(u.Username, _me, StringComparison.Ordinal);
+
+    private async Task CreateAsync()
+    {
+        var ok = await ShowFormAsync("New user", null, async (username, password) =>
+        {
+            var (user, error) = await UserSvc.CreateAsync(username, password);
+            if (user is null) return error;
+            await Audit.LogAsync(_me, "user.create", target: user.Username);
+            return null;
+        });
+        if (!ok) return;
+        Snackbar.Add("User created.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task ResetAsync(User u)
+    {
+        var ok = await ShowFormAsync("Reset password", u.Username, async (username, password) =>
+        {
+            var error = await UserSvc.SetPasswordAsync(username, password);
+            if (error is null) await Audit.LogAsync(_me, "user.password_reset", target: username);
+            return error;
+        });
+        if (ok) Snackbar.Add($"Password for '{u.Username}' updated.", Severity.Success);
+    }
+
+    private async Task DeleteAsync(User u)
+    {
+        var confirm = await Dialogs.ShowMessageBoxAsync("Delete user", $"Delete user '{u.Username}'? They are signed out on their next request.",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirm != true) return;
+        var (deleted, error) = await UserSvc.DeleteAsync(u.Id, _me);
+        if (deleted is null) { Snackbar.Add(error!, Severity.Error); return; }
+        await Audit.LogAsync(_me, "user.delete", target: deleted.Username);
+        Snackbar.Add("User deleted.", Severity.Success);
+        await LoadAsync();
+    }
+
+    private async Task<bool> ShowFormAsync(string title, string? username, Func<string, string, Task<string?>> submit)
+    {
+        var dialog = await Dialogs.ShowAsync<UserFormDialog>(title,
+            new DialogParameters<UserFormDialog> { { x => x.Username, username }, { x => x.OnSubmit, submit } },
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true });
+        var result = await dialog.Result;
+        return result is { Canceled: false };
+    }
+}

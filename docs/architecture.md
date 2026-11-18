@@ -27,6 +27,8 @@ Browser ──HTTPS──> Caddy (container dùng chung) ──> v-panel (host, 
 
 Ở chế độ container, `/opt/vpanel` phải được mount **cùng đường dẫn** bên trong và bên ngoài. v-panel ghi file compose vào đó, còn Docker daemon trên host đọc các đường dẫn bind mount và `--project-directory` theo đường dẫn host. Container v-panel không phải một instance (tên project không có tiền tố `vp-`), nên v-panel không thể tự stop hay remove chính nó.
 
+Lệnh bảo trì (`create-admin`, `reset-password`, `help`) dùng chung binary với web: `Program.cs` nhận ra lệnh ở tham số đầu tiên, dựng host với cùng cấu hình và database, chạy migration rồi thực thi lệnh thay vì khởi động web (`VPanel.Web/Cli/AdminCommands.cs`). Trong image, `/usr/local/bin/vpanel` (`deploy/vpanel-cli.sh`) gọi tới binary này.
+
 Image được build đa kiến trúc (amd64/arm64): stage SDK chạy native rồi cross-publish bằng `-a $TARGETARCH`, còn stage runtime không có lệnh `RUN` nào.
 
 ## Project

@@ -26,6 +26,8 @@ COPY --from=docker:29-cli /usr/local/libexec/docker/cli-plugins/docker-compose /
 
 WORKDIR /app
 COPY --from=build /app ./
+# `docker exec -it vpanel vpanel create-admin` (see `vpanel help`).
+COPY --chmod=755 deploy/vpanel-cli.sh /usr/local/bin/vpanel
 
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     ASPNETCORE_HTTP_PORTS= \

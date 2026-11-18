@@ -57,6 +57,47 @@ public sealed class UserService(IDbContextFactory<VPanelDbContext> dbFactory, Ti
         return (LoginOutcome.Success, user);
     }
 
+    public async Task<List<User>> ListAsync(CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.Users.AsNoTracking().OrderBy(u => u.Username).ToListAsync(ct);
+    }
+
+    public async Task<bool> ExistsAsync(int id, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        return await db.Users.AnyAsync(u => u.Id == id, ct);
+    }
+
+    /// <summary>Sets a new password without checking the current one (admin action / CLI). Returns an error or null.</summary>
+    public async Task<string?> SetPasswordAsync(string username, string newPassword, CancellationToken ct = default)
+    {
+        if (newPassword.Length < MinPasswordLength) return $"Password must be at least {MinPasswordLength} characters.";
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Username == username.Trim(), ct);
+        if (user is null) return $"User '{username.Trim()}' does not exist.";
+        user.PasswordHash = _hasher.HashPassword(user, newPassword);
+        user.UpdatedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(ct);
+        // Lift any login lockout for this user so the new password works right away.
+        foreach (var key in Failures.Keys.Where(k => k.StartsWith(user.Username + "|", StringComparison.OrdinalIgnoreCase)))
+            Failures.TryRemove(key, out _);
+        return null;
+    }
+
+    /// <summary>Deletes a user. The signed-in user cannot delete themselves, and the last user cannot be deleted.</summary>
+    public async Task<(User? Deleted, string? Error)> DeleteAsync(int id, string? currentUsername, CancellationToken ct = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct);
+        if (user is null) return (null, "User not found.");
+        if (string.Equals(user.Username, currentUsername, StringComparison.Ordinal)) return (null, "You cannot delete your own account.");
+        if (await db.Users.CountAsync(ct) <= 1) return (null, "Cannot delete the last user.");
+        db.Users.Remove(user);
+        await db.SaveChangesAsync(ct);
+        return (user, null);
+    }
+
     public async Task<string?> ChangePasswordAsync(string username, string current, string newPassword, CancellationToken ct = default)
     {
         if (newPassword.Length < MinPasswordLength) return $"Password must be at least {MinPasswordLength} characters.";
