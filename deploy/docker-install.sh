@@ -34,8 +34,10 @@ fi
 
 echo
 echo "v-panel is running on 127.0.0.1:5080 (container 'vpanel')."
-echo "Open it through an SSH tunnel:  ssh -L 5080:127.0.0.1:5080 <user>@<server>   then http://localhost:5080"
+echo "Open it through an SSH tunnel:  ssh -N -L 5080:127.0.0.1:5080 <user>@<server>   then http://localhost:5080"
 echo "Create the admin account on first visit, or from the shell:  docker exec -it vpanel vpanel create-admin"
-echo "Then deploy 'shared-infra' (Caddy + PostgreSQL 18) and set"
-echo "Settings > v-panel public URL to expose the panel over HTTPS."
+echo "Then put CLOUDFLARE_TUNNEL_TOKEN in the .env of 'Shared infrastructure', deploy 'shared-infra'"
+echo "(cloudflared + Caddy + PostgreSQL 18; no web port is opened on this server) and point each Cloudflare"
+echo "public hostname to http://caddy:80. Optionally set Settings > v-panel public URL to reach the panel through"
+echo "the tunnel too (protect it with Cloudflare Access); the SSH tunnel keeps working either way."
 echo "Logs: docker logs -f vpanel     Backup: everything lives in $ROOT"

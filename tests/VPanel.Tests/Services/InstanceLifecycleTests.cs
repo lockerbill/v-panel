@@ -1,3 +1,4 @@
+using VPanel.Core.Configuration;
 using VPanel.Core.Domain;
 using VPanel.Infrastructure.Deployments;
 using VPanel.Infrastructure.Services;
@@ -20,6 +21,25 @@ public class InstanceLifecycleTests
         var apps = await host.Get<AppService>().ListAsync();
         Assert.Contains(apps, a => a.App is { Slug: "shared-infra", IsSystem: true } && a.InstanceCount == 1);
         Assert.Contains(apps, a => a.App.Slug == "whoami");
+    }
+
+    [Fact]
+    public async Task Fresh_install_uses_cloudflare_tunnel_and_restart_keeps_saved_mode()
+    {
+        await using var host = await ServiceTestHost.CreateAsync();
+        var settings = host.Get<SettingsService>();
+        Assert.Equal(IngressMode.CloudflareTunnel, settings.Get().Ingress);
+
+        await settings.SaveAsync(settings.Get() with { Ingress = IngressMode.Direct });
+        await VPanel.Infrastructure.Seed.VPanelInitializer.InitializeAsync(host.Services);
+        Assert.Equal(IngressMode.Direct, settings.Get().Ingress);
+    }
+
+    [Fact]
+    public void Settings_saved_before_the_ingress_option_existed_stay_direct()
+    {
+        var old = System.Text.Json.JsonSerializer.Deserialize<PanelSettings>("{\"AppsRoot\":\"/opt/vpanel/apps\",\"CaddyEnabled\":true}")!;
+        Assert.Equal(IngressMode.Direct, old.Ingress);
     }
 
     [Fact]
@@ -92,9 +112,12 @@ public class InstanceLifecycleTests
         Assert.NotNull(deployed.DeployedConfigHash);
         Assert.False(instances.HasUndeployedChanges(deployed));
 
-        var site = Path.Combine(host.Root, "caddy", "sites", "vp-w1.example.com.caddy");
+        // fresh installs default to Cloudflare Tunnel ingress: plain HTTP site, original scheme forwarded
+        var site = Path.Combine(host.Root, "caddy", "sites", "vp-http-w1.example.com.caddy");
         Assert.True(File.Exists(site));
-        Assert.Contains("reverse_proxy vp-whoami-01-web:80", await File.ReadAllTextAsync(site));
+        var siteContent = await File.ReadAllTextAsync(site);
+        Assert.Contains("http://w1.example.com {", siteContent);
+        Assert.Contains("reverse_proxy vp-whoami-01-web:80 {\n\t\theader_up X-Forwarded-Proto https\n\t}", siteContent);
 
         deployed.EnvOverrides = "GREETING=changed\n";
         await instances.SaveAsync(deployed, "tester");

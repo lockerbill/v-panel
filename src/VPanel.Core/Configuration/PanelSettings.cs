@@ -38,6 +38,12 @@ public record PanelSettings
 
     public bool CaddyEnabled { get; init; } = true;
 
+    /// <summary>
+    /// How public traffic reaches Caddy. <see cref="IngressMode.Direct"/>: Caddy publishes 80/443 and obtains certificates.
+    /// <see cref="IngressMode.CloudflareTunnel"/>: cloudflared forwards plain HTTP to Caddy; TLS ends at Cloudflare.
+    /// </summary>
+    public IngressMode Ingress { get; init; } = IngressMode.Direct;
+
     /// <summary>Name of the Caddy container (used for docker exec validate/reload).</summary>
     public string CaddyContainer { get; init; } = "caddy";
 
@@ -55,4 +61,14 @@ public record PanelSettings
     public string CaddySitesDir => Path.Combine(CaddyDir, "sites");
     public string CaddyMainFile => Path.Combine(CaddyDir, "Caddyfile");
     public string CaddyMainFileInContainer => CaddyConfigDirInContainer.TrimEnd('/') + "/Caddyfile";
+}
+
+/// <summary>How public traffic reaches the shared Caddy container.</summary>
+public enum IngressMode
+{
+    /// <summary>Caddy publishes ports 80/443 on the host and manages HTTPS certificates itself.</summary>
+    Direct = 0,
+
+    /// <summary>cloudflared (on the shared network) forwards to http://caddy:80; Caddy serves plain HTTP, publishes no ports.</summary>
+    CloudflareTunnel = 1,
 }

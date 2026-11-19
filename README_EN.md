@@ -7,7 +7,7 @@ v-panel is a self-hosted admin panel for managing applications on a VPS. You ins
 - Define an **app**: name, description, type, and the `docker-compose.yml` and `.env` contents, edited in an IDE-like editor (Monaco).
 - **Save draft** only stores the metadata. **Deploy** makes the engine run the real `docker compose`, with the log streamed live on screen.
 - One app can run as several **instances** (`procurement-01`, `procurement-02`...). Each instance has its own URL, install folder, `.env` overrides and data (volumes).
-- Shared containers (**Caddy** + **PostgreSQL 18**) are an app too, managed from v-panel itself. On deploy, Caddy is configured automatically from the instance's *Public URL* (with automatic HTTPS).
+- Shared containers (**cloudflared** + **Caddy** + **PostgreSQL 18**) are an app too, managed from v-panel itself. Public traffic goes Cloudflare → Cloudflare Tunnel → Caddy → app, so the server opens no 80/443 ports. On deploy, Caddy is configured automatically from the instance's *Public URL*.
 - Deployment history with configuration snapshots, container list, container logs, start/stop/restart/remove and an audit log.
 
 Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco.
@@ -49,19 +49,20 @@ sudo docker compose -f deploy/docker-compose.yml up -d --build
 
 </details>
 
-First access goes through an SSH tunnel:
+First access goes through an SSH tunnel (see [Accessing v-panel](#accessing-v-panel)):
 
 ```bash
-ssh -L 5080:127.0.0.1:5080 user@server
+ssh -N -L 5080:127.0.0.1:5080 user@server
 ```
 
 Open http://localhost:5080 and create the admin account. You can also create it from the shell, see [Users and the admin account](#users-and-the-admin-account).
 
 Then:
 
-1. Deploy the **shared-infra** instance to start Caddy (ports 80/443) and PostgreSQL 18. The Postgres password is generated randomly; view and change it in the `.env` tab of the *Shared infrastructure* app.
-2. Go to **Settings → v-panel public URL** and enter e.g. `https://panel.example.com` to reach the panel over HTTPS. Caddy reaches v-panel on the shared network at `vpanel:8080`.
-3. Create an app, add an instance, fill in its Public URL and press **Deploy**.
+1. Create a Cloudflare Tunnel and put its token in `CLOUDFLARE_TUNNEL_TOKEN` in the `.env` tab of the *Shared infrastructure* app, see [Cloudflare Tunnel](#cloudflare-tunnel). The Postgres password lives there too; it is generated randomly.
+2. Deploy the **shared-infra** instance to start cloudflared, Caddy and PostgreSQL 18. No container publishes a web port on the host.
+3. Create an app, add an instance, fill in its Public URL, add the matching hostname on Cloudflare and press **Deploy**.
+4. Optional: go to **Settings → v-panel public URL** and enter e.g. `https://panel.example.com` to reach the panel through the tunnel. Caddy reaches v-panel on the shared network at `vpanel:8080`.
 
 **Upgrade:**
 
@@ -84,7 +85,7 @@ App data volumes (Postgres...) are Docker volumes and must be backed up separate
 **Logs:** `docker logs -f vpanel`
 
 > **Security and how it works**
-> - The container mounts `/var/run/docker.sock` and runs as root. Control over Docker is equivalent to root on the server, so port 5080 is bound to `127.0.0.1` only, and the panel should only be exposed through Caddy (HTTPS) with a strong password.
+> - The container mounts `/var/run/docker.sock` and runs as root. Control over Docker is equivalent to root on the server, so port 5080 is bound to `127.0.0.1` only. If you publish the panel through Cloudflare Tunnel, use a strong password and put the hostname behind Cloudflare Access.
 > - `/opt/vpanel` is mounted at the **same path** inside and outside the container. The host's Docker resolves bind-mount paths in app compose files as host paths, so do not change either side of this mount.
 
 ### Image on GHCR
@@ -95,6 +96,52 @@ The [`.github/workflows/ci.yml`](.github/workflows/ci.yml) workflow runs the tes
 - a `v1.2.3` tag produces the `1.2.3` and `1.2` tags.
 
 The GHCR package starts out private. Make it public in its *Package settings*, or run `docker login ghcr.io` on the server.
+
+## Accessing v-panel
+
+There are two ways, and both can be used at the same time.
+
+**SSH tunnel** always works, even before shared-infra is deployed or while Caddy/cloudflared are broken. v-panel only listens on `127.0.0.1:5080` on the server:
+
+```bash
+ssh -N -L 5080:127.0.0.1:5080 user@server
+```
+
+Then open http://localhost:5080. If local port 5080 is taken, change the left side, e.g. `-L 15080:127.0.0.1:5080` and open http://localhost:15080. To avoid retyping it, add to `~/.ssh/config`:
+
+```
+Host vpanel
+    HostName server.example.com
+    User user
+    LocalForward 5080 127.0.0.1:5080
+```
+
+Then just run `ssh -N vpanel`.
+
+**Public URL through Cloudflare Tunnel:** fill in **Settings → v-panel public URL** (e.g. `https://panel.example.com`) and add that hostname on Cloudflare like any other app. The panel is root-equivalent, so put this hostname behind a Cloudflare Access application (Zero Trust → Access → Applications) so visitors sign in to Cloudflare before reaching the v-panel login form. Blazor uses WebSockets, which Cloudflare Tunnel supports out of the box.
+
+Signing in through both paths does not conflict: the SSH tunnel is `http://localhost` (non-Secure cookie) and the tunnel is `https://panel…` (Secure cookie); each origin keeps its own session.
+
+## Cloudflare Tunnel
+
+Request flow: browser → Cloudflare (HTTPS) → `cloudflared` (a shared-infra container with an outbound connection to Cloudflare) → `http://caddy:80` on the `vpanel-shared` network → app. Caddy publishes no ports, so the server does not open 80/443 and nobody can bypass Cloudflare to reach an app directly.
+
+1. Cloudflare dashboard → **Zero Trust → Networks → Tunnels → Create a tunnel**, choose *Cloudflared*. Copy the token from the install command (the string after `--token`) into `CLOUDFLARE_TUNNEL_TOKEN` in the `.env` of the *Shared infrastructure* app, then deploy **shared-infra**.
+2. In the tunnel's **Public Hostname** tab, add each hostname (e.g. `p1.example.com`) with *Service* `HTTP` and URL `caddy:80`. A single wildcard `*.example.com` pointing to `caddy:80` saves declaring every app; create the `*` DNS record (CNAME to `<tunnel-id>.cfargotunnel.com`) yourself if the dashboard does not.
+3. **Settings → Public ingress** must be *Cloudflare Tunnel* (the default for new installs).
+
+In this mode v-panel writes Caddy sites as `http://p1.example.com { … }`: TLS ends at Cloudflare and Caddy requests no certificates. For `https://…` Public URLs, Caddy sends `X-Forwarded-Proto: https` to the app so it does not redirect to https in a loop. The visitor's real IP is in the `CF-Connecting-IP` header.
+
+**Direct mode (no Cloudflare):** set **Settings → Public ingress = Direct**, edit the *Shared infrastructure* compose: uncomment Caddy's `ports` block (80, 443) and remove the `cloudflared` service, then deploy. Caddy obtains HTTPS certificates itself as before.
+
+**Moving an existing install (Caddy on 80/443) to the tunnel.** The template stored in v-panel does not change by itself, so do it by hand:
+
+1. **Settings → Public ingress = Cloudflare Tunnel**, then *Save*. v-panel regenerates the Caddy sites as `http://…`.
+2. Edit the *Shared infrastructure* compose following [`samples/infra/docker-compose.yml`](samples/infra/docker-compose.yml): remove Caddy's `ports`, add the `cloudflared` service.
+3. Add `CLOUDFLARE_TUNNEL_TOKEN=…` to the app's `.env` and declare the hostnames on Cloudflare as above.
+4. Deploy **shared-infra**.
+
+To go back to Direct, do the reverse.
 
 ## Users and the admin account
 
@@ -167,7 +214,7 @@ The install script:
 - creates `/opt/vpanel/app` (binaries), `/opt/vpanel/apps`, `/opt/vpanel/caddy` and `/var/lib/vpanel` (data);
 - installs the `vpanel` systemd service.
 
-v-panel listens on `127.0.0.1:5080` and on the `docker0` bridge IP, so Caddy can proxy to it via `host.docker.internal:5080`. Server-specific configuration lives in `/etc/vpanel/appsettings.json` and `/etc/vpanel/vpanel.env`. Logs: `journalctl -u vpanel -f`.
+v-panel listens on `127.0.0.1:5080` (used by the SSH tunnel) and on the `docker0` bridge IP, so Caddy can proxy to it via `host.docker.internal:5080`. Server-specific configuration lives in `/etc/vpanel/appsettings.json` and `/etc/vpanel/vpanel.env`. Logs: `journalctl -u vpanel -f`.
 
 ## Writing docker compose files for multiple instances
 

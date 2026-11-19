@@ -65,5 +65,17 @@ public sealed class CaddyFileProviderTests : IDisposable
         Assert.Equal("mine", await File.ReadAllTextAsync(Path.Combine(_dir, "sites", "my-site.caddy")));
     }
 
+    [Fact]
+    public async Task Switching_to_tunnel_mode_replaces_site_files()
+    {
+        var p = Provider();
+        await p.ApplyAsync([new ProxyRoute("a", "https://a.io", "a:80")], Settings, NullDeploymentLog.Instance, default);
+        var r = await p.ApplyAsync([new ProxyRoute("a", "https://a.io", "a:80")], Settings with { Ingress = IngressMode.CloudflareTunnel },
+            NullDeploymentLog.Instance, default);
+        Assert.True(r.Success, r.Error);
+        Assert.False(File.Exists(Path.Combine(_dir, "sites", "vp-a.io.caddy")));
+        Assert.Contains("http://a.io {", await File.ReadAllTextAsync(Path.Combine(_dir, "sites", "vp-http-a.io.caddy")));
+    }
+
     public void Dispose() => Directory.Delete(_dir, true);
 }

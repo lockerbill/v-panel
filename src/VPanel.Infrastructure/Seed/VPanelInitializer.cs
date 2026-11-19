@@ -21,6 +21,7 @@ public static class VPanelInitializer
         Directory.CreateDirectory(options.DataDir);
 
         var factory = services.GetRequiredService<IDbContextFactory<VPanelDbContext>>();
+        var seededInfra = false;
         await using (var db = await factory.CreateDbContextAsync(ct))
         {
             await db.Database.MigrateAsync(ct);
@@ -28,13 +29,25 @@ public static class VPanelInitializer
 
             if (!await db.Apps.AnyAsync(ct))
             {
-                if (options.SeedInfrastructure) await SeedInfraAsync(db, options.Defaults, logger, ct);
+                if (options.SeedInfrastructure)
+                {
+                    await SeedInfraAsync(db, options.Defaults, logger, ct);
+                    seededInfra = !await db.Settings.AnyAsync(ct);
+                }
                 if (options.SeedExamples) SeedExamples(db, logger);
                 await db.SaveChangesAsync(ct);
             }
         }
 
-        var settings = services.GetRequiredService<SettingsService>().Get();
+        var settingsService = services.GetRequiredService<SettingsService>();
+        if (seededInfra)
+        {
+            // Fresh install: the seeded shared-infra template runs cloudflared and keeps Caddy off the host ports,
+            // so Caddy sites must be plain HTTP. Existing installs keep their saved mode (Direct when never set).
+            logger.LogInformation("Fresh install: public ingress set to Cloudflare Tunnel");
+            await settingsService.SaveAsync(settingsService.Defaults with { Ingress = IngressMode.CloudflareTunnel }, ct);
+        }
+        var settings = settingsService.Get();
         TryCreate(settings.AppsRoot, logger);
         if (settings.CaddyEnabled)
         {
@@ -51,7 +64,7 @@ public static class VPanelInitializer
         {
             Name = "Shared infrastructure",
             Slug = BuiltInTemplates.InfraSlug,
-            Description = "Caddy reverse proxy and PostgreSQL shared by all apps on this server.",
+            Description = "Cloudflare Tunnel (cloudflared), Caddy reverse proxy and PostgreSQL shared by all apps on this server.",
             Type = AppType.DockerCompose,
             ComposeTemplate = BuiltInTemplates.InfraCompose,
             EnvTemplate = BuiltInTemplates.InfraEnv(password),
@@ -61,7 +74,7 @@ public static class VPanelInitializer
         {
             Name = BuiltInTemplates.InfraSlug,
             Slug = BuiltInTemplates.InfraSlug,
-            Description = "Deploy this first: it starts Caddy and PostgreSQL.",
+            Description = "Set CLOUDFLARE_TUNNEL_TOKEN in .env, then deploy this first: it starts cloudflared, Caddy and PostgreSQL.",
             InstallPath = Path.Combine(settings.AppsRoot, BuiltInTemplates.InfraSlug),
             Status = InstanceStatus.Draft,
         });
