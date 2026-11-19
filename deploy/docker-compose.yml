@@ -4,8 +4,9 @@
 # v-panel manages the host's Docker through the socket, so:
 #  - /opt/vpanel MUST be mounted at the SAME path inside the container: compose files written there
 #    are executed by the host's Docker daemon, which resolves bind mounts with host paths.
-#  - access to docker.sock is root-equivalent: keep port 5080 on localhost and expose the panel
-#    only through Caddy (HTTPS) via Settings > v-panel public URL.
+#  - access to docker.sock is root-equivalent: keep port 5080 on localhost. Reach the panel with an SSH tunnel
+#    (ssh -N -L 5080:127.0.0.1:5080 user@server, always available even if Caddy/cloudflared are down) and/or publish it
+#    through Cloudflare Tunnel -> Caddy via Settings > v-panel public URL (protect that hostname with Cloudflare Access).
 name: vpanel
 
 services:

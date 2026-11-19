@@ -1,5 +1,6 @@
 @page "/settings"
 @using VPanel.Infrastructure.Docker
+@using VPanel.Core.Configuration
 @inject SettingsService SettingsSvc
 @inject UserService Users
 @inject AuditService Audit
@@ -41,6 +42,13 @@
                 <MudSwitch T="bool" @bind-Value="_s.CaddyEnabled" Color="Color.Primary" Label="Manage Caddy routes" />
             </div>
             <MudGrid Spacing="3">
+                <MudItem xs="12">
+                    <MudSelect T="IngressMode" @bind-Value="_s.Ingress" Label="Public ingress" Variant="Variant.Outlined" Disabled="!_s.CaddyEnabled"
+                               HelperText="@IngressHelp(_s.Ingress)">
+                        <MudSelectItem Value="IngressMode.CloudflareTunnel">Cloudflare Tunnel (cloudflared → Caddy over HTTP, no ports opened)</MudSelectItem>
+                        <MudSelectItem Value="IngressMode.Direct">Direct (Caddy publishes 80/443 and obtains HTTPS certificates)</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
                 <MudItem xs="12" md="6">
                     <MudTextField @bind-Value="_s.CaddyContainer" Label="Caddy container name" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="!_s.CaddyEnabled" />
                 </MudItem>
@@ -134,6 +142,7 @@
         var settings = _s.ToSettings();
         _errors = SettingsSvc.Validate(settings).ToList();
         if (_errors.Count > 0) return;
+        var ingressChanged = settings.Ingress != SettingsSvc.Get().Ingress;
         _busy = true;
         try
         {
@@ -143,12 +152,23 @@
             {
                 try { await Proxy.EnsureBootstrapAsync(settings, CancellationToken.None); }
                 catch (Exception ex) { _errors.Add($"Could not prepare Caddy folder: {ex.Message}"); }
+                if (ingressChanged)
+                {
+                    // Site addresses depend on the ingress mode (https vs plain http): regenerate them now.
+                    var log = new StringLog();
+                    var r = await Routes.SyncAsync(settings, log, CancellationToken.None);
+                    _diag = log.ToString() + (r.Success ? "✔ routes regenerated for the new ingress mode" : $"✖ {r.Error}");
+                }
             }
             Snackbar.Add("Settings saved.", Severity.Success);
             _audit = await Audit.RecentAsync(30);
         }
         finally { _busy = false; }
     }
+
+    private static string IngressHelp(IngressMode mode) => mode == IngressMode.CloudflareTunnel
+        ? "Sites are plain HTTP; TLS ends at Cloudflare. Run cloudflared in shared-infra and point each hostname to http://caddy:80."
+        : "Caddy must publish ports 80/443 on the host (edit the shared-infra compose).";
 
     private async Task CheckDockerAsync()
     {
@@ -210,6 +230,7 @@
         public string AppsRoot { get; set; } = "";
         public string SharedNetwork { get; set; } = "";
         public bool CaddyEnabled { get; set; }
+        public IngressMode Ingress { get; set; }
         public string CaddyContainer { get; set; } = "";
         public string CaddyDir { get; set; } = "";
         public string CaddyConfigDirInContainer { get; set; } = "";
@@ -218,13 +239,13 @@
 
         public static SettingsModel From(VPanel.Core.Configuration.PanelSettings s) => new()
         {
-            AppsRoot = s.AppsRoot, SharedNetwork = s.SharedNetwork, CaddyEnabled = s.CaddyEnabled, CaddyContainer = s.CaddyContainer,
+            AppsRoot = s.AppsRoot, SharedNetwork = s.SharedNetwork, CaddyEnabled = s.CaddyEnabled, Ingress = s.Ingress, CaddyContainer = s.CaddyContainer,
             CaddyDir = s.CaddyDir, CaddyConfigDirInContainer = s.CaddyConfigDirInContainer, PanelPublicUrl = s.PanelPublicUrl, PanelUpstream = s.PanelUpstream,
         };
 
         public VPanel.Core.Configuration.PanelSettings ToSettings() => new()
         {
-            AppsRoot = AppsRoot.Trim(), SharedNetwork = SharedNetwork.Trim(), CaddyEnabled = CaddyEnabled, CaddyContainer = CaddyContainer.Trim(),
+            AppsRoot = AppsRoot.Trim(), SharedNetwork = SharedNetwork.Trim(), CaddyEnabled = CaddyEnabled, Ingress = Ingress, CaddyContainer = CaddyContainer.Trim(),
             CaddyDir = CaddyDir.Trim(), CaddyConfigDirInContainer = CaddyConfigDirInContainer.Trim(),
             PanelPublicUrl = string.IsNullOrWhiteSpace(PanelPublicUrl) ? null : PanelPublicUrl.Trim(), PanelUpstream = PanelUpstream.Trim(),
         };

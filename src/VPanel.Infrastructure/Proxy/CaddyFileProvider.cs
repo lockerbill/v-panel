@@ -36,7 +36,7 @@ public sealed class CaddyFileProvider(DockerCli docker, ILogger<CaddyFileProvide
         try
         {
             await EnsureBootstrapAsync(settings, ct);
-            var desired = CaddyConfigBuilder.Build(routes);
+            var desired = CaddyConfigBuilder.Build(routes, settings.Ingress);
             var dir = settings.CaddySitesDir;
 
             var existing = Directory.EnumerateFiles(dir, CaddyConfigBuilder.ManagedPrefix + "*" + CaddyConfigBuilder.Extension)

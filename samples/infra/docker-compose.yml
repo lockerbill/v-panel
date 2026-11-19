@@ -1,18 +1,35 @@
 # Shared infrastructure managed by v-panel.
-#  - caddy:    reverse proxy + automatic HTTPS. v-panel writes site files into ${VPANEL_CADDY_DIR}/sites
-#              and reloads Caddy on every deploy.
-#  - postgres: shared PostgreSQL 18. Apps reach it at host "postgres" on the shared network.
-#              PG18 keeps its data under /var/lib/postgresql/18/docker, so the volume is mounted at /var/lib/postgresql.
-# Both join the external network ${VPANEL_SHARED_NETWORK}; app services proxied by v-panel join it too.
+#  - cloudflared: Cloudflare Tunnel. Public traffic goes Cloudflare -> cloudflared -> http://caddy:80 -> app,
+#                 so no web port is opened on the server. Put the tunnel token in .env (CLOUDFLARE_TUNNEL_TOKEN) and,
+#                 in the Cloudflare dashboard, point each public hostname (or *.example.com) to HTTP caddy:80.
+#  - caddy:       reverse proxy. v-panel writes site files into ${VPANEL_CADDY_DIR}/sites and reloads Caddy on every deploy.
+#                 With Settings > Public ingress = Cloudflare Tunnel, sites are plain HTTP (TLS ends at Cloudflare).
+#  - postgres:    shared PostgreSQL 18. Apps reach it at host "postgres" on the shared network.
+#                 PG18 keeps its data under /var/lib/postgresql/18/docker, so the volume is mounted at /var/lib/postgresql.
+# All join the external network ${VPANEL_SHARED_NETWORK}; app services proxied by v-panel join it too.
+#
+# Direct mode instead of the tunnel (Settings > Public ingress = Direct, Caddy obtains HTTPS certificates itself):
+# uncomment the caddy "ports" block below and remove the cloudflared service.
 services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [caddy]
+    networks: [shared]
+
   caddy:
     image: caddy:2
     container_name: caddy
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+    # Direct mode only:
+    # ports:
+    #   - "80:80"
+    #   - "443:443"
+    #   - "443:443/udp"
     volumes:
       - ${VPANEL_CADDY_DIR}:/etc/caddy:ro
       - caddy_data:/data

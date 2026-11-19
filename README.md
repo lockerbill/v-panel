@@ -7,7 +7,7 @@ v-panel là admin panel tự host để quản lý ứng dụng trên một VPS.
 - Khai báo **app** gồm tên, mô tả, loại app, nội dung `docker-compose.yml` và `.env`, soạn trong editor kiểu IDE (Monaco).
 - **Lưu nháp** chỉ ghi metadata. **Deploy** để engine chạy `docker compose` thật, log hiện trực tiếp trên màn hình.
 - Một app có thể chạy thành nhiều **instance** (`procurement-01`, `procurement-02`...). Mỗi instance có URL, thư mục cài, `.env` override và dữ liệu (volume) riêng.
-- Container dùng chung (**Caddy** + **PostgreSQL 18**) cũng là một app và được quản lý ngay trên v-panel. Khi deploy, Caddy được cấu hình tự động theo *Public URL* của instance (có HTTPS tự động).
+- Container dùng chung (**cloudflared** + **Caddy** + **PostgreSQL 18**) cũng là một app và được quản lý ngay trên v-panel. Web public đi theo đường Cloudflare → Cloudflare Tunnel → Caddy → app, nên server không phải mở cổng 80/443. Khi deploy, Caddy được cấu hình tự động theo *Public URL* của instance.
 - Có lịch sử deploy kèm snapshot cấu hình, danh sách container, log container, start/stop/restart/remove và audit log.
 
 Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco.
@@ -49,19 +49,20 @@ sudo docker compose -f deploy/docker-compose.yml up -d --build
 
 </details>
 
-Lần đầu truy cập qua SSH tunnel:
+Lần đầu truy cập qua SSH tunnel (xem [Truy cập v-panel](#truy-cập-v-panel)):
 
 ```bash
-ssh -L 5080:127.0.0.1:5080 user@server
+ssh -N -L 5080:127.0.0.1:5080 user@server
 ```
 
 Mở http://localhost:5080 rồi tạo tài khoản admin. Cũng có thể tạo từ shell, xem [Người dùng và tài khoản admin](#người-dùng-và-tài-khoản-admin).
 
 Sau đó:
 
-1. Deploy instance **shared-infra** để chạy Caddy (cổng 80/443) và PostgreSQL 18. Mật khẩu Postgres được sinh ngẫu nhiên, xem và sửa ở tab `.env` của app *Shared infrastructure*.
-2. Vào **Settings → v-panel public URL**, điền ví dụ `https://panel.example.com` để truy cập panel qua HTTPS. Caddy gọi tới v-panel qua network chung bằng địa chỉ `vpanel:8080`.
-3. Tạo app, thêm instance, điền Public URL, rồi bấm **Deploy**.
+1. Tạo Cloudflare Tunnel và điền token vào `CLOUDFLARE_TUNNEL_TOKEN` ở tab `.env` của app *Shared infrastructure*, xem [Cloudflare Tunnel](#cloudflare-tunnel). Mật khẩu Postgres cũng nằm ở đây, được sinh ngẫu nhiên.
+2. Deploy instance **shared-infra** để chạy cloudflared, Caddy và PostgreSQL 18. Không container nào publish cổng web ra host.
+3. Tạo app, thêm instance, điền Public URL, khai báo hostname tương ứng trên Cloudflare, rồi bấm **Deploy**.
+4. Tuỳ chọn: vào **Settings → v-panel public URL**, điền ví dụ `https://panel.example.com` để vào panel qua tunnel. Caddy gọi tới v-panel qua network chung bằng địa chỉ `vpanel:8080`.
 
 **Nâng cấp:**
 
@@ -84,7 +85,7 @@ Volume dữ liệu của các app (Postgres...) là Docker volume, cần backup 
 **Xem log:** `docker logs -f vpanel`
 
 > **Lưu ý bảo mật và cách hoạt động**
-> - Container được mount `/var/run/docker.sock` và chạy bằng root. Quyền điều khiển Docker tương đương root trên server, nên cổng 5080 chỉ mở trên `127.0.0.1` và panel chỉ nên public qua Caddy (HTTPS) với mật khẩu mạnh.
+> - Container được mount `/var/run/docker.sock` và chạy bằng root. Quyền điều khiển Docker tương đương root trên server, nên cổng 5080 chỉ mở trên `127.0.0.1`. Nếu public panel qua Cloudflare Tunnel thì dùng mật khẩu mạnh và nên bật Cloudflare Access cho hostname đó.
 > - `/opt/vpanel` được mount **cùng đường dẫn** bên trong và bên ngoài container. Docker trên host đọc các đường dẫn bind mount trong compose của app theo đường dẫn host, nên không được đổi vế trái hay vế phải của mount này.
 
 ### Image trên GHCR
@@ -95,6 +96,52 @@ Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy test cho 
 - tag `v1.2.3` tạo tag `1.2.3` và `1.2`.
 
 Lần đầu, package GHCR ở chế độ private. Vào *Package settings* để chuyển sang public, hoặc chạy `docker login ghcr.io` trên server.
+
+## Truy cập v-panel
+
+Có hai cách, dùng song song được.
+
+**SSH tunnel** luôn dùng được, kể cả khi chưa deploy shared-infra hoặc khi Caddy/cloudflared đang lỗi. v-panel chỉ lắng nghe trên `127.0.0.1:5080` của server:
+
+```bash
+ssh -N -L 5080:127.0.0.1:5080 user@server
+```
+
+Rồi mở http://localhost:5080. Nếu cổng 5080 trên máy anh đã bận thì đổi cổng bên trái, ví dụ `-L 15080:127.0.0.1:5080` rồi mở http://localhost:15080. Muốn khỏi gõ lại thì thêm vào `~/.ssh/config`:
+
+```
+Host vpanel
+    HostName server.example.com
+    User user
+    LocalForward 5080 127.0.0.1:5080
+```
+
+Sau đó chỉ cần `ssh -N vpanel`.
+
+**Public URL qua Cloudflare Tunnel:** điền **Settings → v-panel public URL** (ví dụ `https://panel.example.com`) và thêm hostname đó trên Cloudflare như mọi app khác. Panel có quyền tương đương root, nên nên đặt hostname này sau một Cloudflare Access application (Zero Trust → Access → Applications) để đăng nhập Cloudflare trước khi tới form login của v-panel. Blazor dùng WebSocket, Cloudflare Tunnel hỗ trợ sẵn.
+
+Đăng nhập qua hai đường không ảnh hưởng nhau: qua SSH tunnel là `http://localhost` (cookie không Secure), qua tunnel là `https://panel…` (cookie Secure), mỗi origin giữ phiên riêng.
+
+## Cloudflare Tunnel
+
+Luồng request: trình duyệt → Cloudflare (HTTPS) → `cloudflared` (container trong shared-infra, kết nối ra ngoài tới Cloudflare) → `http://caddy:80` qua network `vpanel-shared` → app. Caddy không publish cổng nào nên server không cần mở 80/443, và không ai đi vòng qua Cloudflare để vào thẳng app được.
+
+1. Cloudflare dashboard → **Zero Trust → Networks → Tunnels → Create a tunnel**, chọn *Cloudflared*. Copy token trong lệnh cài (chuỗi sau `--token`) vào `CLOUDFLARE_TUNNEL_TOKEN` trong `.env` của app *Shared infrastructure*, rồi deploy **shared-infra**.
+2. Ở tab **Public Hostname** của tunnel, thêm từng hostname (ví dụ `p1.example.com`), *Service* là `HTTP` và URL `caddy:80`. Có thể thêm một wildcard `*.example.com` trỏ tới `caddy:80` để khỏi khai báo từng app; khi đó tự tạo bản ghi DNS `*` (CNAME tới `<tunnel-id>.cfargotunnel.com`) nếu dashboard chưa tạo.
+3. **Settings → Public ingress** phải là *Cloudflare Tunnel* (mặc định với bản cài mới).
+
+Ở chế độ này v-panel sinh site Caddy dạng `http://p1.example.com { … }`: TLS kết thúc ở Cloudflare, Caddy không xin cert. Với Public URL `https://…`, Caddy gửi `X-Forwarded-Proto: https` tới app để app không redirect lặp sang https. IP thật của người dùng nằm ở header `CF-Connecting-IP`.
+
+**Chế độ Direct (không dùng Cloudflare):** đặt **Settings → Public ingress = Direct**, sửa compose của *Shared infrastructure*: bỏ comment khối `ports` của Caddy (80, 443) và xoá service `cloudflared`, rồi deploy. Caddy sẽ tự xin cert HTTPS như trước.
+
+**Chuyển bản cài cũ (Caddy đang mở 80/443) sang tunnel.** Template đã lưu trong v-panel không tự đổi, nên làm tay:
+
+1. **Settings → Public ingress = Cloudflare Tunnel** rồi *Save*. v-panel sinh lại các site Caddy thành `http://…`.
+2. Sửa compose của *Shared infrastructure* theo [`samples/infra/docker-compose.yml`](samples/infra/docker-compose.yml): bỏ `ports` của Caddy, thêm service `cloudflared`.
+3. Thêm `CLOUDFLARE_TUNNEL_TOKEN=…` vào `.env` của app, khai báo hostname trên Cloudflare như trên.
+4. Deploy **shared-infra**.
+
+Muốn quay lại Direct thì làm ngược lại.
 
 ## Người dùng và tài khoản admin
 
@@ -167,7 +214,7 @@ Script cài đặt sẽ:
 - tạo các thư mục `/opt/vpanel/app` (binary), `/opt/vpanel/apps`, `/opt/vpanel/caddy` và `/var/lib/vpanel` (dữ liệu);
 - cài service systemd `vpanel`.
 
-v-panel lắng nghe ở `127.0.0.1:5080` và ở IP của bridge `docker0`, để Caddy proxy vào qua `host.docker.internal:5080`. Cấu hình riêng của server nằm ở `/etc/vpanel/appsettings.json` và `/etc/vpanel/vpanel.env`. Xem log bằng `journalctl -u vpanel -f`.
+v-panel lắng nghe ở `127.0.0.1:5080` (dùng cho SSH tunnel) và ở IP của bridge `docker0`, để Caddy proxy vào qua `host.docker.internal:5080`. Cấu hình riêng của server nằm ở `/etc/vpanel/appsettings.json` và `/etc/vpanel/vpanel.env`. Xem log bằng `journalctl -u vpanel -f`.
 
 ## Viết docker compose cho nhiều instance
 

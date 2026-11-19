@@ -1,7 +1,10 @@
 # Kiến trúc v-panel
 
 ```
-Browser ──HTTPS──> Caddy (container dùng chung) ──> v-panel (host, systemd, :5080)
+Browser ──HTTPS──> Cloudflare ──tunnel──> cloudflared ──HTTP──> Caddy ──> app (vp-<instance>-<service>:<port>)
+                          (cloudflared + Caddy: shared-infra)     │
+                                                                  └──> v-panel (vpanel:8080)
+SSH tunnel: ssh -L 5080:127.0.0.1:5080 ──────────────────────────────────────> v-panel (127.0.0.1:5080)
                                                      │
    Blazor UI (MudBlazor, Monaco) ───────────────────┤
    Services: App / Instance / Deployment / Settings │
@@ -73,6 +76,16 @@ Caddy chạy trong container `caddy`, mount thư mục `/opt/vpanel/caddy` vào 
 4. Nếu validate hoặc reload lỗi thì khôi phục file cũ.
 
 File không có tiền tố `vp-` do người dùng tự viết và không bị đụng tới.
+
+Địa chỉ site phụ thuộc setting **Public ingress** (`PanelSettings.Ingress`):
+
+| | Cloudflare Tunnel (mặc định bản cài mới) | Direct |
+|---|---|---|
+| Đường vào | Cloudflare → `cloudflared` → `http://caddy:80` qua `vpanel-shared` | Internet → cổng 80/443 Caddy publish ra host |
+| Site Caddy | `http://host { … }`, không xin cert | `host { … }`, Caddy tự xin cert |
+| `X-Forwarded-Proto` | Route có Public URL `https` được `header_up X-Forwarded-Proto https` | Caddy tự đặt |
+
+Bản cài cũ lưu settings không có field này nên vẫn là `Direct`. `VPanelInitializer` chỉ lưu `CloudflareTunnel` khi seed shared-infra lần đầu (DB trống), khớp với template mới không publish cổng. Đổi chế độ ở trang Settings sẽ sync lại route ngay; file `vp-*` cũ được xoá như mọi lần sync.
 
 Instance được route tới `vp-<instance>-<service>:<port>`. Đây là alias trên network `vpanel-shared`, do file override gắn vào.
 
