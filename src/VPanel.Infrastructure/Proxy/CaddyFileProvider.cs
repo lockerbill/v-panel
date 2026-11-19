@@ -40,10 +40,10 @@ public sealed class CaddyFileProvider(DockerCli docker, ILogger<CaddyFileProvide
             var dir = settings.CaddySitesDir;
 
             var existing = Directory.EnumerateFiles(dir, CaddyConfigBuilder.ManagedPrefix + "*" + CaddyConfigBuilder.Extension)
-                .ToDictionary(Path.GetFileName, File.ReadAllText, StringComparer.Ordinal)!;
+                .ToDictionary(f => Path.GetFileName(f), File.ReadAllText, StringComparer.Ordinal);
 
             var changed = desired.Any(d => !existing.TryGetValue(d.Key, out var old) || old != d.Value)
-                          || existing.Keys.Any(k => !desired.ContainsKey(k!));
+                          || existing.Keys.Any(k => !desired.ContainsKey(k));
             if (!changed)
             {
                 log.Info($"Caddy: {desired.Count} site(s) already up to date");
@@ -51,7 +51,7 @@ public sealed class CaddyFileProvider(DockerCli docker, ILogger<CaddyFileProvide
             }
 
             foreach (var (file, content) in desired) await File.WriteAllTextAsync(Path.Combine(dir, file), content, ct);
-            foreach (var stale in existing.Keys.Where(k => !desired.ContainsKey(k!))) File.Delete(Path.Combine(dir, stale!));
+            foreach (var stale in existing.Keys.Where(k => !desired.ContainsKey(k))) File.Delete(Path.Combine(dir, stale));
             log.Info($"Caddy: wrote {desired.Count} site file(s) to {dir}");
 
             var validate = await CaddyAsync(settings, ct, "validate", "--config", settings.CaddyMainFileInContainer, "--adapter", "caddyfile");
