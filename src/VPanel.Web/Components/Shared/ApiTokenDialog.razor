@@ -1,0 +1,101 @@
+@* Creates an API token, then shows the secret once together with ready-to-paste client commands. *@
+@inject ApiTokenService Tokens
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_created is null ? "New API token" : $"Token '{_created.Token.Name}' created")</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_created is null)
+        {
+            @if (_error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-3">@_error</MudAlert>
+            }
+            <MudTextField @bind-Value="_name" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" AutoFocus="true"
+                          HelperText="Who uses it, e.g. claude-laptop or codex-ci. Letters, digits, '.', '_' and '-'." />
+            <MudSelect T="int" @bind-Value="_days" Label="Expires" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelectItem Value="0">Never</MudSelectItem>
+                <MudSelectItem Value="7">In 7 days</MudSelectItem>
+                <MudSelectItem Value="30">In 30 days</MudSelectItem>
+                <MudSelectItem Value="90">In 90 days</MudSelectItem>
+                <MudSelectItem Value="365">In 1 year</MudSelectItem>
+            </MudSelect>
+            <MudText Typo="Typo.body2" Class="vp-muted mt-3">
+                A token has full administrator rights over v-panel and therefore over Docker on this server.
+            </MudText>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+                Copy the token now: it is shown only once. Revoke it here if it leaks.
+            </MudAlert>
+            <Snippet Text="@_created.Secret" OnCopy="CopyAsync" />
+            <MudText Typo="Typo.subtitle2" Class="mt-2 mb-1">Claude Code</MudText>
+            <Snippet Text="@ClaudeCommand" OnCopy="CopyAsync" />
+            <MudText Typo="Typo.subtitle2" Class="mb-1">Codex (<code>~/.codex/config.toml</code>, then <code>export VPANEL_TOKEN=...</code>)</MudText>
+            <Snippet Text="@CodexConfig" OnCopy="CopyAsync" />
+            <MudText Typo="Typo.body2" Class="vp-muted">
+                The URL is the one you opened the panel with; the agent's machine must reach it too, e.g. through
+                <code>ssh -N -L 5080:127.0.0.1:5080 user@server</code> (then <code>http://localhost:5080/mcp</code>) or the panel's public URL.
+                See <code>docs/mcp.md</code>.
+            </MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (_created is null)
+        {
+            <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="CreateAsync" Disabled="_busy">Create token</MudButton>
+        }
+        else
+        {
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="() => MudDialog.Close(DialogResult.Ok(true))">Done</MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string? CreatedBy { get; set; }
+
+    /// <summary>MCP endpoint URL as seen by the browser (e.g. http://localhost:5080/mcp).</summary>
+    [Parameter] public string Endpoint { get; set; } = "";
+
+    private string _name = "";
+    private int _days;
+    private string? _error;
+    private bool _busy;
+    private CreatedApiToken? _created;
+
+    private string ClaudeCommand =>
+        $"claude mcp add --transport http vpanel {Endpoint} --header \"Authorization: Bearer {_created!.Secret}\"";
+
+    private string CodexConfig => $"""
+        [mcp_servers.vpanel]
+        url = "{Endpoint}"
+        bearer_token_env_var = "VPANEL_TOKEN"
+        """;
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        _busy = true;
+        try
+        {
+            DateTimeOffset? expires = _days > 0 ? DateTimeOffset.UtcNow.AddDays(_days) : null;
+            var result = await Tokens.CreateAsync(_name, CreatedBy, expires);
+            if (result.Success) _created = result.Value;
+            else _error = string.Join(" ", result.Errors);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        var ok = await JS.InvokeAsync<bool>("vpanel.copyText", text);
+        Snackbar.Add(ok ? "Copied." : "Copy failed: select the text and copy it manually.", ok ? Severity.Success : Severity.Warning);
+    }
+}

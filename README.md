@@ -9,8 +9,9 @@ v-panel là admin panel tự host để quản lý ứng dụng trên một VPS.
 - Một app có thể chạy thành nhiều **instance** (`procurement-01`, `procurement-02`...). Mỗi instance có URL, thư mục cài, `.env` override và dữ liệu (volume) riêng.
 - Container dùng chung (**cloudflared** + **Caddy** + **PostgreSQL 18**) cũng là một app và được quản lý ngay trên v-panel. Web public đi theo đường Cloudflare → Cloudflare Tunnel → Caddy → app, nên server không phải mở cổng 80/443. Khi deploy, Caddy được cấu hình tự động theo *Public URL* của instance.
 - Có lịch sử deploy kèm snapshot cấu hình, danh sách container, log container, start/stop/restart/remove và audit log.
+- Có **MCP server** (`/mcp`) để AI agent như Claude Code, Codex điều khiển panel bằng API token, ví dụ tự cài một app từ GitHub repo. Xem [docs/mcp.md](docs/mcp.md).
 
-Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco.
+Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco, MCP C# SDK.
 
 ## Cài bằng Docker (khuyến nghị)
 
@@ -166,6 +167,26 @@ echo 'mat-khau-manh' | docker exec -i vpanel vpanel create-admin --username alic
 ```
 
 Chạy không có terminal (`docker exec` thiếu `-it`) thì `create-admin` tự sinh mật khẩu ngẫu nhiên và in ra một lần. Bản cài bằng systemd dùng `sudo -u vpanel /opt/vpanel/app/VPanel.Web create-admin`. Xem toàn bộ tuỳ chọn bằng `vpanel help`.
+
+## Điều khiển bằng AI agent (MCP)
+
+v-panel có MCP server ở `/mcp` để Claude Code, Codex... tạo app, tạo instance, deploy và đọc log thay anh. Ví dụ đưa agent một GitHub repo, agent tự viết compose theo quy ước của v-panel, cài lên server và sửa đến khi app chạy.
+
+1. Tạo token ở trang **API tokens**, hoặc từ shell:
+
+   ```bash
+   docker exec vpanel vpanel create-token --name claude-laptop
+   ```
+
+2. Mở SSH tunnel tới server (`ssh -N -L 5080:127.0.0.1:5080 user@server`), rồi khai báo với agent, ví dụ Claude Code:
+
+   ```bash
+   claude mcp add --transport http vpanel http://localhost:5080/mcp --header "Authorization: Bearer vp_xxx"
+   ```
+
+3. Yêu cầu agent, ví dụ: *"Cài https://github.com/owner/repo lên server qua v-panel, public ở https://app.example.com"*.
+
+Token có toàn quyền admin. Mọi thao tác qua MCP ghi audit log dưới tên `mcp:<token>`. Cấu hình Codex, danh sách tool và quy trình cài app xem ở [docs/mcp.md](docs/mcp.md).
 
 ## PostgreSQL dùng chung (bản 18)
 

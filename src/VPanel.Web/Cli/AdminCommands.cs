@@ -13,9 +13,9 @@ public static class AdminCommands
 {
     public const string DefaultUsername = "admin";
     private static readonly string[] HelpNames = ["help", "--help", "-h"];
-    private static readonly string[] CommandNames = ["create-admin", "reset-password", .. HelpNames];
+    private static readonly string[] CommandNames = ["create-admin", "reset-password", "create-token", "list-tokens", "revoke-token", .. HelpNames];
 
-    public sealed record Invocation(string Command, string? Username, bool PasswordStdin, string? Error);
+    public sealed record Invocation(string Command, string? Username, bool PasswordStdin, string? Error, string? Name = null, int? ExpiresDays = null);
 
     /// <summary>True when the command can run without the database (help, argument errors).</summary>
     public static bool IsStandalone(Invocation inv) => inv.Command == "help" || inv.Error is not null;
@@ -25,7 +25,8 @@ public static class AdminCommands
     public static Invocation Parse(string[] args)
     {
         var command = HelpNames.Contains(args[0]) ? "help" : args[0];
-        string? username = null;
+        string? username = null, name = null;
+        int? expiresDays = null;
         var stdin = false;
         for (var i = 1; i < args.Length; i++)
         {
@@ -37,6 +38,13 @@ public static class AdminCommands
                 case "--password-stdin":
                     stdin = true;
                     break;
+                case "--name" or "-n" when i + 1 < args.Length:
+                    name = args[++i];
+                    break;
+                case "--expires-days" when i + 1 < args.Length && int.TryParse(args[i + 1], out var days) && days > 0:
+                    expiresDays = days;
+                    i++;
+                    break;
                 case "--help" or "-h":
                     command = "help";
                     break;
@@ -44,7 +52,9 @@ public static class AdminCommands
                     return new Invocation(command, username, stdin, $"Unknown or incomplete option '{args[i]}'.");
             }
         }
-        return new Invocation(command, username, stdin, null);
+        if (command is "create-token" or "revoke-token" && string.IsNullOrWhiteSpace(name))
+            return new Invocation(command, username, stdin, $"{command} needs --name <token name>.");
+        return new Invocation(command, username, stdin, null, name, expiresDays);
     }
 
     public static string Usage => """
@@ -53,11 +63,16 @@ public static class AdminCommands
         Commands:
           create-admin     Create an administrator account.
           reset-password   Set a new password for an existing account.
+          create-token     Create an API token for the MCP endpoint (/mcp) and print it once.
+          list-tokens      List API tokens.
+          revoke-token     Delete an API token; agents using it are rejected immediately.
           help             Show this help.
 
         Options:
           -u, --username <name>   Account name (create-admin defaults to "admin").
           --password-stdin        Read the password from the first line of standard input.
+          -n, --name <name>       Token name (create-token, revoke-token), e.g. claude-laptop.
+          --expires-days <days>   Token lifetime (create-token); no expiry by default.
 
         Without --password-stdin the password is asked for on the terminal (hidden). When no terminal is
         attached, create-admin generates a random password and prints it once.
@@ -66,6 +81,7 @@ public static class AdminCommands
           docker exec -it vpanel vpanel create-admin
           docker exec -it vpanel vpanel reset-password --username admin
           echo 'S3cret-pass' | docker exec -i vpanel vpanel create-admin -u alice --password-stdin
+          docker exec vpanel vpanel create-token --name claude-laptop
           sudo -u vpanel /opt/vpanel/app/VPanel.Web create-admin      (systemd install)
         """;
 
@@ -98,6 +114,12 @@ public static class AdminCommands
                 return await CreateAdminAsync(users, audit, inv, io);
             case "reset-password":
                 return await ResetPasswordAsync(users, audit, inv, io);
+            case "create-token":
+                return await CreateTokenAsync(scope.ServiceProvider.GetRequiredService<ApiTokenService>(), inv, io);
+            case "list-tokens":
+                return await ListTokensAsync(scope.ServiceProvider.GetRequiredService<ApiTokenService>(), io);
+            case "revoke-token":
+                return await RevokeTokenAsync(scope.ServiceProvider.GetRequiredService<ApiTokenService>(), inv, io);
             default:
                 throw new InvalidOperationException($"Unhandled command '{inv.Command}'.");
         }
@@ -163,6 +185,48 @@ public static class AdminCommands
         }
         await audit.LogAsync("cli", "auth.reset_password_cli", target: inv.Username.Trim());
         io.Out.WriteLine($"Password for '{inv.Username.Trim()}' updated.");
+        return 0;
+    }
+
+    private static async Task<int> CreateTokenAsync(ApiTokenService tokens, Invocation inv, CliConsole io)
+    {
+        DateTimeOffset? expires = inv.ExpiresDays is { } d ? DateTimeOffset.UtcNow.AddDays(d) : null;
+        var result = await tokens.CreateAsync(inv.Name!, "cli", expires);
+        if (!result.Success)
+        {
+            io.Error.WriteLine($"Error: {string.Join(" ", result.Errors)}");
+            return 1;
+        }
+        // The secret alone goes to stdout so scripts can capture it; the explanation goes to stderr.
+        io.Error.WriteLine($"API token '{result.Value!.Token.Name}' created{(expires is null ? "" : $" (expires {expires:yyyy-MM-dd})")}. It is shown only once:");
+        io.Out.WriteLine(result.Value.Secret);
+        io.Error.WriteLine("Use it as 'Authorization: Bearer <token>' for the MCP endpoint /mcp (see docs/mcp.md).");
+        return 0;
+    }
+
+    private static async Task<int> ListTokensAsync(ApiTokenService tokens, CliConsole io)
+    {
+        var list = await tokens.ListAsync();
+        if (list.Count == 0)
+        {
+            io.Out.WriteLine("No API tokens.");
+            return 0;
+        }
+        io.Out.WriteLine($"{"NAME",-24} {"PREFIX",-12} {"CREATED",-17} {"LAST USED",-17} EXPIRES");
+        foreach (var t in list)
+            io.Out.WriteLine($"{t.Name,-24} {t.Prefix,-12} {t.CreatedAt:yyyy-MM-dd HH:mm} {(t.LastUsedAt is { } u ? u.ToString("yyyy-MM-dd HH:mm") : "never"),-17} {(t.ExpiresAt is { } e ? e.ToString("yyyy-MM-dd") : "never")}");
+        return 0;
+    }
+
+    private static async Task<int> RevokeTokenAsync(ApiTokenService tokens, Invocation inv, CliConsole io)
+    {
+        var result = await tokens.RevokeAsync(inv.Name!, "cli");
+        if (!result.Success)
+        {
+            io.Error.WriteLine($"Error: {string.Join(" ", result.Errors)}");
+            return 1;
+        }
+        io.Out.WriteLine($"API token '{result.Value!.Name}' revoked.");
         return 0;
     }
 

@@ -10,6 +10,7 @@ using VPanel.Infrastructure.Seed;
 using VPanel.Web.Auth;
 using VPanel.Web.Cli;
 using VPanel.Web.Components;
+using VPanel.Web.Mcp;
 
 // `vpanel create-admin`, `vpanel reset-password`...: run a maintenance command instead of the web host.
 var command = AdminCommands.IsCommand(args) ? AdminCommands.Parse(args) : null;
@@ -80,6 +81,9 @@ builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<CurrentUser>();
 
+// MCP endpoint for agents (Claude Code, Codex...), authenticated with API tokens.
+builder.Services.AddVPanelMcp();
+
 // v-panel normally sits behind the shared Caddy container
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
 {
@@ -104,6 +108,7 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
 }
 app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+app.UseMcpWithoutStatusCodePages();
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -116,6 +121,7 @@ app.MapPost("/logout", async (HttpContext ctx) =>
     return Results.LocalRedirect("/login");
 });
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok" })).AllowAnonymous();
+app.MapVPanelMcp();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
