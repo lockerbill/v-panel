@@ -14,6 +14,7 @@ public class VPanelDbContext(DbContextOptions<VPanelDbContext> options, ISecretP
     public DbSet<Deployment> Deployments => Set<Deployment>();
     public DbSet<Setting> Settings => Set<Setting>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<ApiToken> ApiTokens => Set<ApiToken>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -74,6 +75,16 @@ public class VPanelDbContext(DbContextOptions<VPanelDbContext> options, ISecretP
             e.Property(x => x.FinishedAt).HasConversion(dtoNullable);
             e.HasIndex(x => new { x.InstanceId, x.CreatedAt });
             e.Ignore(x => x.Duration);
+        });
+
+        b.Entity<ApiToken>(e =>
+        {
+            e.HasIndex(x => x.Name).IsUnique();
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.Property(x => x.Name).HasMaxLength(64).UseCollation("NOCASE");
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.Prefix).HasMaxLength(16);
+            e.Property(x => x.CreatedBy).HasMaxLength(128);
         });
 
         b.Entity<Setting>(e => e.HasKey(x => x.Key));

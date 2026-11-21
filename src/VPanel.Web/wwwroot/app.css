@@ -188,3 +188,11 @@ a { color: var(--mud-palette-primary); }
 .mud-tab { text-transform: none !important; letter-spacing: 0 !important; font-weight: 550; }
 .vp-kv code { white-space: normal; word-break: break-all; }
 .vp-editor-fallback { padding: 16px; color: var(--mud-palette-error); }
+
+/* API tokens: secret + connect commands shown once */
+.vp-snippet {
+    position: relative; margin: 0 0 12px; padding: 10px 44px 10px 12px; border-radius: 6px;
+    background: var(--mud-palette-background-gray); border: 1px solid var(--mud-palette-lines-default);
+    font-family: var(--vp-mono); font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.vp-snippet .vp-snippet-copy { position: absolute; top: 4px; right: 4px; }

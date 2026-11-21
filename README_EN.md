@@ -9,8 +9,9 @@ v-panel is a self-hosted admin panel for managing applications on a VPS. You ins
 - One app can run as several **instances** (`procurement-01`, `procurement-02`...). Each instance has its own URL, install folder, `.env` overrides and data (volumes).
 - Shared containers (**cloudflared** + **Caddy** + **PostgreSQL 18**) are an app too, managed from v-panel itself. Public traffic goes Cloudflare → Cloudflare Tunnel → Caddy → app, so the server opens no 80/443 ports. On deploy, Caddy is configured automatically from the instance's *Public URL*.
 - Deployment history with configuration snapshots, container list, container logs, start/stop/restart/remove and an audit log.
+- An **MCP server** (`/mcp`) lets AI agents such as Claude Code or Codex drive the panel with an API token, e.g. install an app straight from a GitHub repository. See [docs/mcp.md](docs/mcp.md).
 
-Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco.
+Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco, MCP C# SDK.
 
 ## Install with Docker (recommended)
 
@@ -166,6 +167,26 @@ echo 'a-strong-password' | docker exec -i vpanel vpanel create-admin --username 
 ```
 
 Without a terminal (`docker exec` without `-it`), `create-admin` generates a random password and prints it once. For the systemd install use `sudo -u vpanel /opt/vpanel/app/VPanel.Web create-admin`. Run `vpanel help` for all options.
+
+## Driving v-panel from an AI agent (MCP)
+
+v-panel exposes an MCP server at `/mcp` so that Claude Code, Codex and other agents can create apps and instances, deploy and read logs for you. For example, give an agent a GitHub repository and it writes a compose file that follows v-panel's conventions, installs it on the server and iterates until the app runs.
+
+1. Create a token on the **API tokens** page, or from the shell:
+
+   ```bash
+   docker exec vpanel vpanel create-token --name claude-laptop
+   ```
+
+2. Open an SSH tunnel to the server (`ssh -N -L 5080:127.0.0.1:5080 user@server`) and register the server with the agent, e.g. Claude Code:
+
+   ```bash
+   claude mcp add --transport http vpanel http://localhost:5080/mcp --header "Authorization: Bearer vp_xxx"
+   ```
+
+3. Ask the agent, e.g. *"Install https://github.com/owner/repo on my server through v-panel, served at https://app.example.com"*.
+
+A token has full admin rights. Every MCP action is recorded in the audit log as `mcp:<token>`. Codex configuration, the tool list and the install workflow are in [docs/mcp.md](docs/mcp.md) (Vietnamese).
 
 ## Shared PostgreSQL (version 18)
 

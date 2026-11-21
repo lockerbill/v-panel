@@ -1,0 +1,82 @@
+@page "/api-tokens"
+@inject ApiTokenService Tokens
+@inject CurrentUser Me
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+
+<PageTitle>API tokens · v-panel</PageTitle>
+
+<PageHeader Title="API tokens" Subtitle="Tokens let AI agents (Claude Code, Codex...) drive v-panel through the MCP endpoint /mcp. Every token has full administrator rights.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="CreateAsync">New token</MudButton>
+    </Actions>
+</PageHeader>
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTable T="ApiToken" Items="_tokens" Hover="true" Dense="true" Elevation="0" Loading="_tokens is null" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>Name</MudTh>
+            <MudTh>Token</MudTh>
+            <MudTh>Created</MudTh>
+            <MudTh>Last used</MudTh>
+            <MudTh>Expires</MudTh>
+            <MudTh Style="text-align:right">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">
+                <div class="vp-cell-title">
+                    <b>@context.Name</b>
+                    @if (context.IsExpired(DateTimeOffset.UtcNow)) { <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">expired</MudChip> }
+                </div>
+            </MudTd>
+            <MudTd DataLabel="Token"><code>@context.Prefix…</code></MudTd>
+            <MudTd DataLabel="Created" Class="vp-muted vp-nowrap">@Dashboard.Ago(context.CreatedAt)@(context.CreatedBy is { } by ? $" by {by}" : "")</MudTd>
+            <MudTd DataLabel="Last used" Class="vp-muted vp-nowrap">@(context.LastUsedAt is { } t ? Dashboard.Ago(t) : "never")</MudTd>
+            <MudTd DataLabel="Expires" Class="vp-muted vp-nowrap">@(context.ExpiresAt is { } e ? e.ToLocalTime().ToString("yyyy-MM-dd") : "never")</MudTd>
+            <MudTd DataLabel="Actions" Style="text-align:right" Class="vp-nowrap">
+                <MudTooltip Text="Revoke">
+                    <MudIconButton Icon="@Icons.Material.Outlined.Delete" Size="Size.Small" Color="Color.Error"
+                                   OnClick="() => RevokeAsync(context)" aria-label="@($"Revoke {context.Name}")" />
+                </MudTooltip>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <div class="vp-empty">No API tokens yet. Create one to connect an agent, or run <code>vpanel create-token --name &lt;name&gt;</code> on the server.</div>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private List<ApiToken>? _tokens;
+    private string? _me;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _me = await Me.NameAsync();
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync() => _tokens = await Tokens.ListAsync();
+
+    private async Task CreateAsync()
+    {
+        var endpoint = Nav.BaseUri.TrimEnd('/') + VPanel.Web.Mcp.McpEndpoint.Path;
+        var dialog = await Dialogs.ShowAsync<ApiTokenDialog>("New API token",
+            new DialogParameters<ApiTokenDialog> { { x => x.CreatedBy, _me }, { x => x.Endpoint, endpoint } },
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, BackdropClick = false });
+        await dialog.Result;
+        await LoadAsync();
+    }
+
+    private async Task RevokeAsync(ApiToken t)
+    {
+        var confirm = await Dialogs.ShowMessageBoxAsync("Revoke token", $"Revoke '{t.Name}'? Agents using it are rejected on their next request.",
+            yesText: "Revoke", cancelText: "Cancel");
+        if (confirm != true) return;
+        var result = await Tokens.RevokeAsync(t.Id.ToString(), _me);
+        if (!result.Success) { Snackbar.Add(string.Join(" ", result.Errors), Severity.Error); return; }
+        Snackbar.Add("Token revoked.", Severity.Success);
+        await LoadAsync();
+    }
+}

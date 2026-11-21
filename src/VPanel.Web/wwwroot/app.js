@@ -18,6 +18,9 @@ window.vpanel = {
             })();
         });
     },
+    copyText: async function (text) {
+        try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+    },
     scrollToBottom: function (el) {
         if (!el) return;
         const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
