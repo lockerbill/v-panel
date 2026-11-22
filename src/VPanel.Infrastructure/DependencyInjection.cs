@@ -47,6 +47,7 @@ public static class DependencyInjection
         services.AddSingleton<SettingsService>();
         services.AddSingleton<AuditService>();
         services.AddSingleton<UserService>();
+        services.AddSingleton<ApiTokenService>();
         services.AddSingleton<AppService>();
         services.AddSingleton<InstanceService>();
         services.AddSingleton<DeploymentService>();

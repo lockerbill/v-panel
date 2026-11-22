@@ -18,8 +18,12 @@ internal sealed class FakeProcessRunner : IProcessRunner
 
     public Task<ProcessResult> RunAsync(ProcessSpec spec, Action<string>? onOutput = null, CancellationToken ct = default)
     {
-        Calls.Add(spec);
-        var rule = _rules.FirstOrDefault(r => r.Match(spec.Arguments));
+        (Func<IReadOnlyList<string>, bool> Match, Func<ProcessSpec, ProcessResult> Respond) rule;
+        lock (_rules) // background workers (status sync, deployments) may call concurrently in host-level tests
+        {
+            Calls.Add(spec);
+            rule = _rules.FirstOrDefault(r => r.Match(spec.Arguments));
+        }
         var result = rule.Respond?.Invoke(spec) ?? new ProcessResult(0, "", "");
         foreach (var line in result.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)) onOutput?.Invoke(line);
         return Task.FromResult(result);

@@ -157,10 +157,11 @@ public class InstanceLifecycleTests
         await using var host = await ServiceTestHost.CreateAsync();
         var users = host.Get<UserService>();
         Assert.False(await users.AnyUsersAsync());
-        Assert.NotNull((await users.CreateAsync("admin", "short")).Error);
-        Assert.NotNull((await users.CreateAsync("admin", "longenough")).User);
-        Assert.Equal(LoginOutcome.Success, (await users.VerifyAsync("ADMIN", "longenough", "ip")).Outcome);
-        for (var i = 0; i < 5; i++) Assert.Equal(LoginOutcome.InvalidCredentials, (await users.VerifyAsync("admin", "wrong", "ip2")).Outcome);
-        Assert.Equal(LoginOutcome.LockedOut, (await users.VerifyAsync("admin", "longenough", "ip2")).Outcome);
+        // Lockout state is static: use a name no other test resets (UserServiceTests runs `reset-password -u admin` in parallel).
+        Assert.NotNull((await users.CreateAsync("lockout-admin", "short")).Error);
+        Assert.NotNull((await users.CreateAsync("lockout-admin", "longenough")).User);
+        Assert.Equal(LoginOutcome.Success, (await users.VerifyAsync("LOCKOUT-ADMIN", "longenough", "ip")).Outcome);
+        for (var i = 0; i < 5; i++) Assert.Equal(LoginOutcome.InvalidCredentials, (await users.VerifyAsync("lockout-admin", "wrong", "ip2")).Outcome);
+        Assert.Equal(LoginOutcome.LockedOut, (await users.VerifyAsync("lockout-admin", "longenough", "ip2")).Outcome);
     }
 }

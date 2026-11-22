@@ -7,6 +7,7 @@ Browser ──HTTPS──> Cloudflare ──tunnel──> cloudflared ──HTTP
 SSH tunnel: ssh -L 5080:127.0.0.1:5080 ──────────────────────────────────────> v-panel (127.0.0.1:5080)
                                                      │
    Blazor UI (MudBlazor, Monaco) ───────────────────┤
+   MCP /mcp (Bearer API token, cho AI agent) ───────┤
    Services: App / Instance / Deployment / Settings │
    DeploymentQueue + DeploymentWorker (nền)         │
    StatusSyncWorker (đồng bộ trạng thái từ Docker)  │
@@ -30,7 +31,7 @@ SSH tunnel: ssh -L 5080:127.0.0.1:5080 ─────────────�
 
 Ở chế độ container, `/opt/vpanel` phải được mount **cùng đường dẫn** bên trong và bên ngoài. v-panel ghi file compose vào đó, còn Docker daemon trên host đọc các đường dẫn bind mount và `--project-directory` theo đường dẫn host. Container v-panel không phải một instance (tên project không có tiền tố `vp-`), nên v-panel không thể tự stop hay remove chính nó.
 
-Lệnh bảo trì (`create-admin`, `reset-password`, `help`) dùng chung binary với web: `Program.cs` nhận ra lệnh ở tham số đầu tiên, dựng host với cùng cấu hình và database, chạy migration rồi thực thi lệnh thay vì khởi động web (`VPanel.Web/Cli/AdminCommands.cs`). Trong image, `/usr/local/bin/vpanel` (`deploy/vpanel-cli.sh`) gọi tới binary này.
+Lệnh bảo trì (`create-admin`, `reset-password`, `create-token`, `list-tokens`, `revoke-token`, `help`) dùng chung binary với web: `Program.cs` nhận ra lệnh ở tham số đầu tiên, dựng host với cùng cấu hình và database, chạy migration rồi thực thi lệnh thay vì khởi động web (`VPanel.Web/Cli/AdminCommands.cs`). Trong image, `/usr/local/bin/vpanel` (`deploy/vpanel-cli.sh`) gọi tới binary này.
 
 Image được build đa kiến trúc (amd64/arm64): stage SDK chạy native rồi cross-publish bằng `-a $TARGETARCH`, còn stage runtime không có lệnh `RUN` nào.
 
@@ -63,6 +64,14 @@ Hash cấu hình được tính trên các file render ra cộng các thông s�
 6. Worker lưu trạng thái rồi `ProxyRouteService` tính lại toàn bộ bảng route từ DB và gọi `IReverseProxyProvider.ApplyAsync`.
 
 Lệnh docker luôn được gọi qua `ProcessStartInfo.ArgumentList`, không đi qua shell. Job của cùng một instance chạy tuần tự, còn các instance khác nhau chạy song song (giới hạn bởi `MaxConcurrentDeployments`). Khi v-panel khởi động lại, job đang chạy dở bị đánh dấu Failed và job đang chờ được đưa lại vào hàng đợi.
+
+## MCP server
+
+`VPanel.Web/Mcp` đăng ký MCP server (gói `ModelContextProtocol.AspNetCore`, Streamable HTTP, stateless) tại `/mcp`. Endpoint chỉ nhận scheme xác thực `ApiToken` (`Auth/ApiTokenAuthenticationHandler.cs`, header `Authorization: Bearer vp_...`), còn UI vẫn chỉ nhận cookie. Hai đường không dùng lẫn được.
+
+- **ApiToken** (bảng `ApiTokens`) chỉ lưu SHA-256 của secret cùng vài ký tự đầu để nhận diện. `ApiTokenService` lo tạo, thu hồi, kiểm tra hạn và cập nhật `LastUsedAt` (tối đa mỗi phút một lần).
+- Các tool (`PanelTools`, `AppTools`, `InstanceTools`) chỉ gọi lại service có sẵn (`AppService`, `InstanceService`, `DeploymentService`...), nên validate, audit và hàng đợi deploy giống hệt UI. User ghi audit là `mcp:<tên token>`. Tool trả DTO gọn thay vì entity EF. Lỗi nghiệp vụ được trả về dạng tool error (`McpException`) để agent đọc và tự sửa.
+- `McpGuide` chứa server instructions (gửi khi client kết nối) và hướng dẫn cài app đầy đủ (tool `get_install_guide`, prompt `install_app_from_repo`). Đổi quy ước compose thì sửa cả file này.
 
 ## Caddy
 
@@ -99,4 +108,6 @@ Instance được route tới `vp-<instance>-<service>:<port>`. Đây là alias 
 | Lưu secret ở nơi khác (Vault...) | Implement `ISecretProtector`. |
 | Rollback | `Deployment` đã lưu snapshot compose/env, chỉ cần thêm action dựng lại file từ snapshot. |
 | Nhiều user / phân quyền | `User.Role` và cookie claims đã có sẵn, thêm policy và trang quản lý user. |
+| Tool MCP mới | Thêm method `[McpServerTool]` vào một class trong `VPanel.Web/Mcp` (hoặc class mới đăng ký bằng `WithTools<T>()` trong `McpEndpoint`), gọi service có sẵn và trả DTO. |
+| Token giới hạn quyền | Thêm cột scope cho `ApiToken`, đưa scope vào claim trong `ApiTokenAuthenticationHandler` và kiểm tra trong tool. |
 | Tự cấp database cho instance | Thêm bước provisioner trước `up` (tạo DB/role trong Postgres dùng chung). Hiện làm bằng service `db-init` trong compose, xem `samples/apps/postgres-app`. |

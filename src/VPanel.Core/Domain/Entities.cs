@@ -123,6 +123,23 @@ public class Deployment : Entity
     public TimeSpan? Duration => StartedAt is { } s && FinishedAt is { } f ? f - s : null;
 }
 
+/// <summary>
+/// Bearer token for machine access (MCP endpoint). Only a SHA-256 hash of the secret is stored; the secret is shown once at creation.
+/// </summary>
+public class ApiToken : Entity
+{
+    public string Name { get; set; } = "";
+    public string TokenHash { get; set; } = "";
+
+    /// <summary>First characters of the secret, to recognise a token without revealing it.</summary>
+    public string Prefix { get; set; } = "";
+    public string? CreatedBy { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
+
+    public bool IsExpired(DateTimeOffset now) => ExpiresAt is { } e && e <= now;
+}
+
 public class Setting
 {
     public string Key { get; set; } = "";

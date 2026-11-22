@@ -1,0 +1,8 @@
+@* Monospace block with a copy button. *@
+<div class="vp-snippet">@Text<MudIconButton Class="vp-snippet-copy" Icon="@Icons.Material.Outlined.ContentCopy" Size="Size.Small"
+                                              OnClick="() => OnCopy.InvokeAsync(Text)" aria-label="Copy" /></div>
+
+@code {
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+    [Parameter] public EventCallback<string> OnCopy { get; set; }
+}
