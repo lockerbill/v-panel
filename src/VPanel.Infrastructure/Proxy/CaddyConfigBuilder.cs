@@ -41,7 +41,11 @@ public static partial class CaddyConfigBuilder
 
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (address, entries) in sites.OrderBy(s => s.Key, StringComparer.Ordinal))
-            files[FileName(address)] = BuildSite(address, entries);
+        {
+            // Internal CA (hosts without public DNS/certificates). Plain-HTTP sites (tunnel mode, http://) have no TLS at all.
+            var tlsInternal = !address.StartsWith("http://", StringComparison.Ordinal) && entries.Any(e => e.Route.TlsInternal);
+            files[FileName(address)] = BuildSite(address, entries, tlsInternal);
+        }
         return files;
     }
 
@@ -66,12 +70,13 @@ public static partial class CaddyConfigBuilder
 
     private sealed record SiteEntry(string Prefix, ProxyRoute Route, bool ForwardHttps);
 
-    private static string BuildSite(string address, List<SiteEntry> entries)
+    private static string BuildSite(string address, List<SiteEntry> entries, bool tlsInternal)
     {
         var sb = new StringBuilder();
         sb.Append("# Managed by v-panel. Do not edit: regenerated on every deploy.\n");
         foreach (var e in entries) sb.Append("# route ").Append(e.Route.Id).Append(" -> ").Append(e.Route.Upstream).Append('\n');
         sb.Append(address).Append(" {\n");
+        if (tlsInternal) sb.Append("\ttls internal\n");
 
         // longest prefix first; a duplicate prefix keeps the first route
         var ordered = entries.GroupBy(e => e.Prefix).Select(g => g.First()).OrderByDescending(e => e.Prefix.Length).ToList();

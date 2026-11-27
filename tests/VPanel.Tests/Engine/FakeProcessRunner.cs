@@ -16,6 +16,15 @@ internal sealed class FakeProcessRunner : IProcessRunner
         return this;
     }
 
+    /// <summary>Adds a rule that takes precedence over the rules registered so far.</summary>
+    public FakeProcessRunner Before(Func<IReadOnlyList<string>, bool> match, Func<ProcessSpec, ProcessResult> respond)
+    {
+        lock (_rules) _rules.Insert(0, (match, respond));
+        return this;
+    }
+
+    public FakeProcessRunner Before(Func<IReadOnlyList<string>, bool> match, ProcessResult result) => Before(match, _ => result);
+
     public Task<ProcessResult> RunAsync(ProcessSpec spec, Action<string>? onOutput = null, CancellationToken ct = default)
     {
         (Func<IReadOnlyList<string>, bool> Match, Func<ProcessSpec, ProcessResult> Respond) rule;

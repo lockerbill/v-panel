@@ -56,6 +56,13 @@ public class AppVolume : Entity
 public class AppInstance : Entity
 {
     public const string LocalServer = "local";
+    public const string DefaultComposeFile = "docker-compose.yml";
+
+    /// <summary>
+    /// <see cref="DeployedConfigHash"/> of a stack imported from an existing installation that v-panel has not deployed yet:
+    /// status is synced from Docker, but no route is generated until the first deploy.
+    /// </summary>
+    public const string ImportedHash = "imported";
 
     public int AppId { get; set; }
     public AppDefinition? App { get; set; }
@@ -92,9 +99,36 @@ public class AppInstance : Entity
     /// <summary>Target server; only "local" in v1 (reserved for multi-server support).</summary>
     public string ServerId { get; set; } = LocalServer;
 
+    /// <summary>
+    /// Compose project name of an imported stack (kept so its containers, volumes and networks stay the same).
+    /// Null for instances created in v-panel, whose project is <c>vp-{Slug}</c>.
+    /// </summary>
+    public string? ComposeProjectName { get; set; }
+
+    /// <summary>File name of the compose file in <see cref="InstallPath"/>; null means docker-compose.yml.</summary>
+    public string? ComposeFileName { get; set; }
+
+    /// <summary>How images are obtained on deploy.</summary>
+    public BuildMode BuildMode { get; set; } = BuildMode.Build;
+
+    /// <summary>Caddy serves this instance with its internal CA (<c>tls internal</c>), for hostnames without public certificates.</summary>
+    public bool TlsInternal { get; set; }
+
+    /// <summary>Network alias of the proxy service used by the last successful deploy (route upstream host).</summary>
+    public string? DeployedProxyAlias { get; set; }
+
+    /// <summary>JSON <see cref="Domain.ImportInfo"/> for stacks imported from an existing installation; null otherwise.</summary>
+    public string? ImportInfoJson { get; set; }
+
     public List<Deployment> Deployments { get; set; } = [];
 
-    public string ProjectName => $"vp-{Slug}";
+    public string ProjectName => string.IsNullOrWhiteSpace(ComposeProjectName) ? $"vp-{Slug}" : ComposeProjectName;
+    public string EffectiveComposeFile => string.IsNullOrWhiteSpace(ComposeFileName) ? DefaultComposeFile : ComposeFileName;
+    public bool IsImported => ImportInfoJson is not null;
+
+    /// <summary>Imported and not deployed by v-panel yet.</summary>
+    public bool IsAwaitingFirstDeploy => DeployedConfigHash == ImportedHash;
+    public ImportInfo? Import => ImportInfo.Parse(ImportInfoJson);
     public string? EffectiveProxyService => string.IsNullOrWhiteSpace(ProxyService) ? App?.DefaultProxyService : ProxyService;
     public int? EffectiveProxyPort => ProxyPort ?? App?.DefaultProxyPort;
     public string EffectiveCompose => ComposeOverride ?? App?.ComposeTemplate ?? "";

@@ -9,6 +9,7 @@
 @inject DockerCli Docker
 @inject CurrentUser Me
 @inject ISnackbar Snackbar
+@inject Microsoft.Extensions.Options.IOptions<VPanelOptions> Options
 
 <PageTitle>Settings · v-panel</PageTitle>
 
@@ -33,6 +34,24 @@
                 <MudItem xs="12" md="6">
                     <MudTextField @bind-Value="_s.SharedNetwork" Label="Shared docker network" Variant="Variant.Outlined" Class="vp-mono-input"
                                   HelperText="External network joined by Caddy, Postgres and proxied services." />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudText Typo="Typo.body2"><b>Adopted roots</b> <span class="vp-muted">(folders of stacks installed before v-panel)</span></MudText>
+                    @if (SettingsSvc.Get().AdoptedRoots.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">None. Re-run the installer with <code>--adopt</code> (or set <code>VPanel:AdoptedRoots</code>) to <MudLink Href="/import">import existing stacks</MudLink> that live outside the apps root.</MudText>
+                    }
+                    else
+                    {
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            @foreach (var r in SettingsSvc.Get().AdoptedRoots) { <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="vp-mono">@r</MudChip> }
+                        </div>
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Set at install time (they must match the folders mounted into the v-panel container).</MudText>
+                    }
+                    @foreach (var rejected in Options.Value.RejectedAdoptedRoots)
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" Variant="Variant.Outlined">Adopted root refused: @rejected</MudAlert>
+                    }
                 </MudItem>
             </MudGrid>
 

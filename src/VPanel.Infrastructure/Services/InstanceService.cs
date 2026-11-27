@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using VPanel.Core.Configuration;
 using VPanel.Core.Domain;
 using VPanel.Core.Utilities;
 using VPanel.Infrastructure.Data;
@@ -7,7 +9,8 @@ namespace VPanel.Infrastructure.Services;
 
 public sealed record InstanceSummary(AppInstance Instance, bool HasUndeployedChanges);
 
-public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory, SettingsService settings, AppTypeRegistry registry, AuditService audit)
+public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory, SettingsService settings, AppTypeRegistry registry, AuditService audit,
+    IOptions<VPanelOptions> options)
 {
     public async Task<List<InstanceSummary>> ListAsync(int? appId = null, CancellationToken ct = default)
     {
@@ -65,9 +68,19 @@ public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory
         input.Slug = string.IsNullOrWhiteSpace(input.Slug) ? Slug.From(input.Name) : input.Slug.Trim();
         if (!Slug.IsValid(input.Slug)) errors.Add("Slug may only contain lowercase letters, digits and dashes (max 48).");
         if (string.IsNullOrWhiteSpace(input.InstallPath)) input.InstallPath = Path.Combine(s.AppsRoot, input.Slug);
-        var resolved = PathGuard.ResolveInside(s.AppsRoot, input.InstallPath.Trim());
-        if (resolved is null) errors.Add($"Install folder must be inside the apps root ({s.AppsRoot}).");
+        var resolved = PathGuard.ResolveInsideAny(s.AllowedRoots, input.InstallPath.Trim());
+        if (resolved is null)
+            errors.Add(s.AdoptedRoots.Count == 0
+                ? $"Install folder must be inside the apps root ({s.AppsRoot})."
+                : $"Install folder must be inside the apps root ({s.AppsRoot}) or an adopted root ({string.Join(", ", s.AdoptedRoots)}).");
         else input.InstallPath = resolved;
+        var dataDir = options.Value.DataDir.TrimEnd('/');
+        if (resolved is not null && (resolved == dataDir || PathGuard.IsStrictlyInside(resolved, dataDir) || PathGuard.IsStrictlyInside(dataDir, resolved)))
+            errors.Add("Install folder must not overlap the v-panel data folder.");
+        if (input.ComposeProjectName is { Length: > 0 } project && !Slug.IsValidProjectName(project))
+            errors.Add("Compose project name may only contain lowercase letters, digits, '-' and '_'.");
+        if (input.ComposeFileName is { Length: > 0 } file && (file.Contains('/') || file.Contains('\\') || file.StartsWith('.')))
+            errors.Add("Compose file name must be a plain file name.");
         if (!string.IsNullOrWhiteSpace(input.PublicUrl) && !UrlHelper.TryParse(input.PublicUrl, out _))
             errors.Add("Public URL is not a valid http(s) URL.");
         if (input.ProxyPort is < 1 or > 65535) errors.Add("Proxy port must be between 1 and 65535.");
@@ -77,6 +90,8 @@ public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory
         var others = await db.Instances.AsNoTracking().Where(i => i.Id != input.Id && i.Status != InstanceStatus.Removed).ToListAsync(ct);
         if (await db.Instances.AnyAsync(i => i.Id != input.Id && i.Slug == input.Slug, ct))
             errors.Add($"Another instance already uses slug '{input.Slug}'.");
+        if (others.Any(o => o.ProjectName == input.ProjectName))
+            errors.Add($"Another instance already uses compose project '{input.ProjectName}'.");
         if (others.Any(o => string.Equals(o.InstallPath.TrimEnd('/'), input.InstallPath.TrimEnd('/'), StringComparison.Ordinal)
                             || PathGuard.IsStrictlyInside(o.InstallPath, input.InstallPath) || PathGuard.IsStrictlyInside(input.InstallPath, o.InstallPath)))
             errors.Add("Install folder overlaps with another instance.");
@@ -97,9 +112,14 @@ public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory
         else
         {
             entity = await db.Instances.FirstOrDefaultAsync(i => i.Id == input.Id, ct) ?? throw new KeyNotFoundException();
-            if (entity.Slug != input.Slug && entity.DeployedConfigHash is not null && entity.Status != InstanceStatus.Removed)
-                return Result<AppInstance>.Fail("Slug cannot be changed after deploy (it is the compose project name). Remove the instance first.");
+            var deployed = entity.DeployedConfigHash is not null && entity.Status != InstanceStatus.Removed;
+            if (deployed && entity.ProjectName != input.ProjectName)
+                return Result<AppInstance>.Fail("The compose project name cannot change after deploy (slug of v-panel instances). Remove the instance first.");
         }
+        entity.ComposeProjectName = string.IsNullOrWhiteSpace(input.ComposeProjectName) ? null : input.ComposeProjectName.Trim();
+        entity.ComposeFileName = string.IsNullOrWhiteSpace(input.ComposeFileName) ? null : input.ComposeFileName.Trim();
+        entity.BuildMode = input.BuildMode;
+        entity.TlsInternal = input.TlsInternal;
         entity.Name = input.Name;
         entity.Slug = input.Slug;
         entity.Description = input.Description?.Trim();
@@ -119,11 +139,15 @@ public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var inst = await db.Instances.FirstOrDefaultAsync(i => i.Id == id, ct);
         if (inst is null) return Result<bool>.Fail("Instance not found.");
-        if (inst.Status is not (InstanceStatus.Draft or InstanceStatus.Removed) && inst.DeployedConfigHash is not null)
+        // An imported stack never deployed by v-panel can be forgotten: v-panel has changed nothing on it yet.
+        if (inst.Status is not (InstanceStatus.Draft or InstanceStatus.Removed) && inst.DeployedConfigHash is not null && !inst.IsAwaitingFirstDeploy)
             return Result<bool>.Fail("Instance is deployed. Run 'Remove' first to stop its containers.");
         if (await db.Deployments.AnyAsync(d => d.InstanceId == id && (d.Status == DeploymentStatus.Queued || d.Status == DeploymentStatus.Running), ct))
             return Result<bool>.Fail("A deployment job is in progress.");
         db.Instances.Remove(inst);
+        // The template created by an import belongs to that stack only: forgetting the stack removes it too.
+        if (inst.IsImported && !await db.Instances.AnyAsync(i => i.AppId == inst.AppId && i.Id != inst.Id, ct))
+            db.Apps.Remove(await db.Apps.FirstAsync(a => a.Id == inst.AppId, ct));
         await db.SaveChangesAsync(ct);
         await audit.LogAsync(user, "instance.delete", inst.Slug, ct: ct);
         return Result<bool>.Ok(true);

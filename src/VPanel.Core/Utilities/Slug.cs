@@ -16,6 +16,12 @@ public static partial class Slug
 
     public static bool IsValid(string? slug) => slug is not null && ValidRegex().IsMatch(slug);
 
+    [GeneratedRegex("^[a-z0-9][a-z0-9_-]{0,62}$")]
+    private static partial Regex ProjectNameRegex();
+
+    /// <summary>Docker compose project name rules (lowercase letters, digits, dashes and underscores).</summary>
+    public static bool IsValidProjectName(string? name) => name is not null && ProjectNameRegex().IsMatch(name);
+
     /// <summary>Generates a DNS-safe slug: lowercase ascii, digits and dashes.</summary>
     public static string From(string? text)
     {

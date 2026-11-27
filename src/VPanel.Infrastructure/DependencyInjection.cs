@@ -25,6 +25,7 @@ public static class DependencyInjection
             AppsRoot = Absolute(options.Defaults.AppsRoot, contentRoot),
             CaddyDir = Absolute(options.Defaults.CaddyDir, contentRoot),
         };
+        options.AdoptedRoots = NormalizeAdoptedRoots(options);
         services.AddSingleton(Microsoft.Extensions.Options.Options.Create(options));
 
         services.AddDataProtection()
@@ -52,6 +53,8 @@ public static class DependencyInjection
         services.AddSingleton<InstanceService>();
         services.AddSingleton<DeploymentService>();
         services.AddSingleton<ProxyRouteService>();
+        services.AddSingleton<Import.StackScanner>();
+        services.AddSingleton<Import.StackImportService>();
 
         // Background processing
         services.AddSingleton<DeploymentQueue>();
@@ -62,6 +65,22 @@ public static class DependencyInjection
         services.AddSingleton<StatusSyncWorker>();
         services.AddHostedService(sp => sp.GetRequiredService<StatusSyncWorker>());
         return services;
+    }
+
+    private static string[] NormalizeAdoptedRoots(VPanelOptions options)
+    {
+        var accepted = new List<string>();
+        foreach (var raw in options.AdoptedRoots)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            if (!Core.Utilities.PathGuard.IsAcceptableAdoptedRoot(raw.Trim(), out var root, out var reason))
+                options.RejectedAdoptedRoots.Add($"{raw}: {reason}");
+            else if (root == options.DataDir || Core.Utilities.PathGuard.IsStrictlyInside(options.DataDir, root))
+                options.RejectedAdoptedRoots.Add($"{raw}: inside the v-panel data folder");
+            else if (!accepted.Contains(root))
+                accepted.Add(root);
+        }
+        return [.. accepted];
     }
 
     private static string Absolute(string path, string root) =>

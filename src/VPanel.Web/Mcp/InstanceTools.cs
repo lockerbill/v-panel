@@ -62,6 +62,8 @@ public sealed class InstanceTools(
         [Description("Override of the app's proxy service.")] string? proxy_service = null,
         [Description("Override of the app's proxy port.")] int? proxy_port = null,
         [Description("Description.")] string? description = null,
+        [Description("\"build\" (default: pull plain images, `up --build` rebuilds buildable services) or \"pull_first\" (pull every image, build only missing ones; for services with both image: and build:).")] string? build_mode = null,
+        [Description("Serve the Public URL with Caddy's internal CA (`tls internal`), for internal hostnames without public certificates.")] bool? tls_internal = null,
         CancellationToken ct = default)
     {
         AppInstance input;
@@ -96,10 +98,19 @@ public sealed class InstanceTools(
         if (proxy_service is not null) input.ProxyService = proxy_service;
         if (proxy_port is not null) input.ProxyPort = proxy_port == 0 ? null : proxy_port;
         if (description is not null) input.Description = description;
+        if (build_mode is not null) input.BuildMode = ParseBuildMode(build_mode);
+        if (tls_internal is not null) input.TlsInternal = tls_internal.Value;
 
         var saved = McpContext.Unwrap(await instances.SaveAsync(input, ctx.User, ct), "Saving the instance");
         return await DescribeAsync(await ctx.RequireInstanceAsync(saved.Id.ToString(), ct), includeContainers: false, ct);
     }
+
+    internal static BuildMode ParseBuildMode(string value) => value.Trim().ToLowerInvariant().Replace("-", "_") switch
+    {
+        "build" => BuildMode.Build,
+        "pull_first" or "pullfirst" => BuildMode.PullFirst,
+        _ => throw new McpException($"Unknown build_mode '{value}'. Use build or pull_first."),
+    };
 
     [McpServerTool(Name = "run_instance_action", Destructive = false, OpenWorld = true)]
     [Description("""
@@ -188,7 +199,11 @@ public sealed class InstanceTools(
         return lines.Count == 0 ? "(no log output)" : string.Join('\n', lines);
     }
 
-    private async Task<InstanceDetail> DescribeAsync(AppInstance i, bool includeContainers, CancellationToken ct)
+    private Task<InstanceDetail> DescribeAsync(AppInstance i, bool includeContainers, CancellationToken ct) =>
+        DescribeAsync(i, includeContainers, registry, deployments, settings, instances, ct);
+
+    internal static async Task<InstanceDetail> DescribeAsync(AppInstance i, bool includeContainers, AppTypeRegistry registry,
+        DeploymentService deployments, SettingsService settings, InstanceService instances, CancellationToken ct)
     {
         IReadOnlyList<ContainerDto>? containers = null;
         if (includeContainers && i.DeployedConfigHash is not null)
@@ -198,11 +213,20 @@ public sealed class InstanceTools(
         }
         var recent = (await deployments.ListAsync(i.Id, 5, ct)).Select(DeploymentListItem.From).ToList();
         var proxyService = i.EffectiveProxyService;
+        string? alias = null;
+        if (proxyService is not null)
+        {
+            try { alias = ComposeRenderer.Render(i, settings.Get()).ProxyAlias; }
+            catch (Exception) { alias = ComposeRenderer.ProxyAlias(i, proxyService); }
+        }
+        var takeover = i.Import?.PendingTakeover;
         return new InstanceDetail(i.Id, i.Slug, i.Name, i.Description, i.App!.Name, i.App.Slug, i.Status.ToString(), i.StatusDetail,
             i.PublicUrl, i.InstallPath, i.ProjectName, i.ProxyService, i.ProxyPort, proxyService, i.EffectiveProxyPort,
-            proxyService is null ? null : ComposeRenderer.ProxyAlias(i, proxyService), i.EnvOverrides, i.ComposeOverride,
-            instances.HasUndeployedChanges(i), i.LastDeployedAt, containers, recent);
+            alias, i.EnvOverrides, i.ComposeOverride,
+            instances.HasUndeployedChanges(i), i.LastDeployedAt, containers, recent, i.BuildMode.ToString(), i.TlsInternal, i.IsImported,
+            i.IsAwaitingFirstDeploy, takeover is null ? null : $"{takeover.Address} in {takeover.File}");
     }
+
 
     private async Task<DeploymentDetail> WaitAsync(int deploymentId, int waitSeconds, int logTail, CancellationToken ct)
     {

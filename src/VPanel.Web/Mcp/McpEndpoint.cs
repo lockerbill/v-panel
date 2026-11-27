@@ -40,6 +40,7 @@ public static class McpEndpoint
             .WithTools<PanelTools>()
             .WithTools<AppTools>()
             .WithTools<InstanceTools>()
+            .WithTools<ImportTools>()
             .WithPrompts<InstallPrompts>();
         return services;
     }

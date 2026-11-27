@@ -14,7 +14,7 @@ public sealed class SettingsService(IDbContextFactory<VPanelDbContext> dbFactory
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
     private PanelSettings? _cache;
 
-    public PanelSettings Defaults => options.Value.Defaults;
+    public PanelSettings Defaults => options.Value.Defaults with { AdoptedRoots = options.Value.AdoptedRoots };
 
     public PanelSettings Get()
     {
@@ -27,7 +27,7 @@ public sealed class SettingsService(IDbContextFactory<VPanelDbContext> dbFactory
             try { settings = JsonSerializer.Deserialize<PanelSettings>(row.Value, Json) ?? Defaults; }
             catch (JsonException) { settings = Defaults; }
         }
-        return _cache = settings;
+        return _cache = settings with { AdoptedRoots = options.Value.AdoptedRoots };
     }
 
     public async Task SaveAsync(PanelSettings settings, CancellationToken ct = default)
@@ -38,7 +38,7 @@ public sealed class SettingsService(IDbContextFactory<VPanelDbContext> dbFactory
         if (row is null) db.Settings.Add(new Setting { Key = Key, Value = json });
         else { row.Value = json; row.UpdatedAt = DateTimeOffset.UtcNow; }
         await db.SaveChangesAsync(ct);
-        _cache = settings;
+        _cache = settings with { AdoptedRoots = options.Value.AdoptedRoots };
     }
 
     public IReadOnlyList<string> Validate(PanelSettings s)

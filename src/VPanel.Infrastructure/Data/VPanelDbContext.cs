@@ -64,6 +64,14 @@ public class VPanelDbContext(DbContextOptions<VPanelDbContext> options, ISecretP
             e.Ignore(x => x.EffectiveProxyService);
             e.Ignore(x => x.EffectiveProxyPort);
             e.Ignore(x => x.EffectiveCompose);
+            e.Ignore(x => x.EffectiveComposeFile);
+            e.Ignore(x => x.IsImported);
+            e.Ignore(x => x.IsAwaitingFirstDeploy);
+            e.Ignore(x => x.Import);
+            e.Property(x => x.ComposeProjectName).HasMaxLength(64);
+            e.Property(x => x.ComposeFileName).HasMaxLength(128);
+            e.Property(x => x.BuildMode).HasConversion<string>().HasMaxLength(16);
+            e.Property(x => x.DeployedProxyAlias).HasMaxLength(128);
         });
 
         b.Entity<Deployment>(e =>

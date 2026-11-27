@@ -14,6 +14,10 @@ public static class McpGuide
         workflow validate_compose -> save_app -> save_instance -> run_instance_action(deploy) -> get_deployment /
         get_container_logs. Apps and instances can be referenced by numeric id or slug.
 
+        Stacks installed by hand before v-panel (a shared Caddy/Postgres stack, app compose stacks) are adopted with
+        scan_existing_stacks -> import_stack (infrastructure first) -> preview_deploy -> run_instance_action(deploy).
+        Imported instances keep their folder and compose project name (not `vp-<slug>`).
+
         Every tool acts with full administrator rights and is recorded in the audit log under this token's name.
         Ask the user before destructive actions (remove_instance with delete_volumes/delete_files, delete_app,
         delete_instance, changing the system app shared-infra).
@@ -152,6 +156,23 @@ public static class McpGuide
         Edit with save_app / save_instance, then deploy again; get_instance shows `hasUndeployedChanges`. Do not edit the
         rendered files in the install folder by hand - v-panel overwrites them on every deploy. Changing an app template
         affects every instance of that app on its next deploy.
+
+        ## Adopting stacks installed by hand
+        1. `scan_existing_stacks`: unmanaged compose projects, the shared infrastructure (stack running Caddy) and the
+           settings v-panel would adopt, hand-written Caddy sites and which stack each one routes to. A stack can be imported
+           when `canImport` is true; otherwise its folder must be mounted / added to the adopted roots (`suggestedRoot`,
+           installer `--adopt`): tell the user, do not work around it.
+        2. `import_stack` the infrastructure first (`importInfraFirst`), then each app. Nothing is restarted; the instance
+           keeps its folder, compose project, named volumes and networks. A service already on the shared network with an
+           alias keeps it as the route upstream (no override file, no recreate). `build_mode: pull_first` keeps the usual
+           `docker compose pull && up -d` behaviour for services with both `image:` and `build:`. `tls_internal` for
+           internal hostnames served with Caddy's local CA.
+        3. `preview_deploy` on the instance: services marked `recreate` will restart on the first deploy (data is kept).
+           Ask the user before deploying when anything would be recreated.
+        4. `run_instance_action(deploy)` once. It writes v-panel's files (the import already copied the original compose
+           file and .env to `.vpanel-backup/` in the folder) and, when the Public URL was served by a simple hand-written
+           Caddy site, replaces that site with a generated one in the same Caddy reload.
+        `delete_instance` on an imported instance that was never deployed only forgets it (containers untouched).
 
         ## Lifecycle actions
         `start`, `stop`, `restart`, `down` (stop and remove containers, keep data), `remove_instance` (down + optionally

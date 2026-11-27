@@ -8,16 +8,30 @@ namespace VPanel.Infrastructure.Docker;
 
 public sealed record ComposeVolumeInfo(string Name, VolumeKind Kind, string? Source, string? Service, string? Target);
 
+/// <summary>A network a service joins (key as written under the service), with its aliases on it.</summary>
+public sealed record ComposeServiceNetwork(string Key, IReadOnlyList<string> Aliases);
+
 public sealed record ComposeServiceInfo(string Name, string? Image, bool HasBuild, bool HasExplicitNetworks, string? NetworkMode,
-    IReadOnlyList<string> Ports, IReadOnlyList<string> ExposedPorts);
+    IReadOnlyList<string> Ports, IReadOnlyList<string> ExposedPorts, IReadOnlyList<ComposeServiceNetwork> Networks);
 
 public sealed record ComposeAnalysis(
     IReadOnlyList<ComposeServiceInfo> Services,
     IReadOnlyList<ComposeVolumeInfo> Volumes,
     IReadOnlyList<string> ExternalNetworks,
-    IReadOnlyList<ValidationIssue> Issues)
+    IReadOnlyList<ValidationIssue> Issues,
+    IReadOnlyDictionary<string, string>? NetworkNames = null)
 {
     public bool IsValid => Issues.All(i => i.IsWarning);
+
+    /// <summary>
+    /// Docker name of a top-level network key: its <c>name:</c> (interpolated), or the key itself for an external network.
+    /// Null for project-scoped networks without a fixed name (docker names them &lt;project&gt;_&lt;key&gt;).
+    /// </summary>
+    public string? NetworkName(string key) => NetworkNames is not null && NetworkNames.TryGetValue(key, out var n) ? n : null;
+
+    /// <summary>The network entry through which <paramref name="service"/> joins the docker network named <paramref name="networkName"/>.</summary>
+    public ComposeServiceNetwork? JoinedNetwork(ComposeServiceInfo service, string networkName) =>
+        service.Networks.FirstOrDefault(n => NetworkName(n.Key) == networkName);
 }
 
 /// <summary>
@@ -103,7 +117,7 @@ public static partial class ComposeAnalyzer
                 var hasNetworks = svc.Children.ContainsKey(new YamlScalarNode("networks"));
                 var ports = Seq(svc, "ports").Select(p => p is YamlScalarNode s ? s.Value ?? "" : DescribePort(p)).ToList();
                 var expose = Seq(svc, "expose").OfType<YamlScalarNode>().Select(s => s.Value ?? "").ToList();
-                services.Add(new ComposeServiceInfo(name, image, hasBuild, hasNetworks, networkMode, ports, expose));
+                services.Add(new ComposeServiceInfo(name, image, hasBuild, hasNetworks, networkMode, ports, expose, ServiceNetworks(svc, env)));
 
                 foreach (var vol in Seq(svc, "volumes"))
                 {
@@ -145,15 +159,46 @@ public static partial class ComposeAnalyzer
                 volumes.Add(new ComposeVolumeInfo(decl.Name ?? name, decl.External ? VolumeKind.External : VolumeKind.Named, name, null, null));
 
         var topNetworks = Map(root, "networks");
+        var networkNames = new Dictionary<string, string>(StringComparer.Ordinal);
         if (topNetworks is not null)
             foreach (var (k, v) in topNetworks.Children)
-                if (v is YamlMappingNode nm && IsTrue(nm, "external"))
-                    externalNetworks.Add(Scalar(nm, "name") is { } n ? Interpolate(n, env) : ((YamlScalarNode)k).Value!);
+            {
+                var key = ((YamlScalarNode)k).Value!;
+                var nm = v as YamlMappingNode;
+                var external = nm is not null && IsTrue(nm, "external");
+                var explicitName = nm is not null && Scalar(nm, "name") is { } n ? Interpolate(n, env) : null;
+                if (explicitName is not null || external) networkNames[key] = explicitName ?? key;
+                if (external) externalNetworks.Add(explicitName ?? key);
+            }
 
         if (root.Children.ContainsKey(new YamlScalarNode("version")))
             issues.Add(new ValidationIssue("Top-level 'version' is obsolete and ignored by docker compose.", IsWarning: true));
 
-        return new(services, volumes, externalNetworks, issues);
+        return new(services, volumes, externalNetworks, issues, networkNames);
+    }
+
+    /// <summary>Service <c>networks:</c> in list form (<c>[a, b]</c>) or map form (<c>a: { aliases: [...] }</c>).</summary>
+    private static List<ComposeServiceNetwork> ServiceNetworks(YamlMappingNode svc, IReadOnlyDictionary<string, string> env)
+    {
+        var list = new List<ComposeServiceNetwork>();
+        if (!svc.Children.TryGetValue(new YamlScalarNode("networks"), out var node)) return list;
+        if (node is YamlSequenceNode seq)
+        {
+            foreach (var item in seq.Children.OfType<YamlScalarNode>())
+                if (item.Value is { Length: > 0 } key) list.Add(new ComposeServiceNetwork(key, []));
+        }
+        else if (node is YamlMappingNode map)
+        {
+            foreach (var (k, v) in map.Children)
+            {
+                if (((YamlScalarNode)k).Value is not { Length: > 0 } key) continue;
+                var aliases = v is YamlMappingNode m
+                    ? Seq(m, "aliases").OfType<YamlScalarNode>().Select(a => Interpolate(a.Value ?? "", env)).Where(a => a.Length > 0).ToList()
+                    : [];
+                list.Add(new ComposeServiceNetwork(key, aliases));
+            }
+        }
+        return list;
     }
 
     private static string DescribePort(YamlNode node) =>
