@@ -109,7 +109,7 @@
                         <td class="vp-mono">@s.Address @(s.TlsInternal ? "(tls internal)" : "")</td>
                         <td class="vp-mono">@(s.Upstream ?? "-")</td>
                         <td class="vp-mono vp-small">@s.File:@s.Line</td>
-                        <td>@(s.IsSimple ? "yes" : $"no ({s.Reason})")</td>
+                        <td>@(s.CanTakeOver ? (s.Directives is null && s.ProxyOptions is null ? "yes" : "yes, keeping its directives") : $"no ({s.Reason})")</td>
                     </tr>
                 }
             </tbody>

@@ -49,15 +49,22 @@ public sealed class StackImportTests
         Assert.Equal("n8n", n8n.ProxyService);
         Assert.Equal(5678, n8n.ProxyPort);
         Assert.Equal("https://internal.n8n-arm.arm-app-u01", n8n.PublicUrl);
-        Assert.True(n8n.TlsInternal);
-        Assert.True(n8n.ManualSite!.IsSimple);
+        Assert.False(n8n.TlsInternal); // TLS comes from "import common", which is carried over
+        Assert.Equal("tls internal (from snippet 'common')", n8n.TlsNote);
+        Assert.StartsWith("import common\n", n8n.ProxyDirectives);
+        Assert.Contains("header {\n\tX-Content-Type-Options \"nosniff\"", n8n.ProxyDirectives);
+        Assert.Contains("# n8n uses WebSockets", n8n.ProxyDirectives);
+        Assert.Null(n8n.ProxyOptions);
+        Assert.True(n8n.ManualSite!.CanTakeOver);
         Assert.Equal(BuildMode.Build, n8n.SuggestedBuildMode);
 
         var cxml = scan.Find("cxml-dev-server")!;
         Assert.Equal("app", cxml.ProxyService);
         Assert.Equal(8080, cxml.ProxyPort);
-        Assert.Null(cxml.PublicUrl); // its Caddy site has an extra header directive: stays hand-written
-        Assert.Contains(cxml.Warnings, w => w.Contains("not a plain reverse proxy"));
+        Assert.Equal("https://internal.cxml.arm-app-u01", cxml.PublicUrl);
+        Assert.Equal("health_uri /health\nhealth_interval 15s\nhealth_timeout 5s\n", cxml.ProxyOptions);
+        Assert.Contains("-Server", cxml.ProxyDirectives);
+        Assert.Contains("# Deliberately NO X-Frame-Options", cxml.ProxyDirectives);
         Assert.Equal(BuildMode.PullFirst, cxml.SuggestedBuildMode);
         Assert.Equal(server.CxmlRepo, cxml.SuggestedRoot); // folder + build context ../..
 
@@ -106,11 +113,12 @@ public sealed class StackImportTests
         Assert.Equal("n8n-arm", inst.ProjectName);
         Assert.Equal(server.N8n, inst.InstallPath);
         Assert.Equal("docker-compose.yml", inst.ComposeFileName);
-        Assert.True(inst.TlsInternal);
+        Assert.False(inst.TlsInternal);
+        Assert.StartsWith("import common\n", inst.ProxyDirectives);
         Assert.True(inst.IsAwaitingFirstDeploy);
         Assert.Equal(InstanceStatus.Running, inst.Status);
         Assert.Equal("https://internal.n8n-arm.arm-app-u01", inst.PublicUrl);
-        Assert.Equal(Path.Combine(server.CaddyDir, "sites", "n8n.caddy"), inst.Import!.PendingTakeover!.File);
+        Assert.Equal(Path.Combine(server.CaddyDir, "sites", "n8n-arm.caddy"), inst.Import!.PendingTakeover!.File);
         Assert.True(File.Exists(Path.Combine(inst.Import.BackupDir!, "docker-compose.yml")));
         Assert.True(File.Exists(Path.Combine(inst.Import.BackupDir!, ".env")));
         Assert.Null(ProxyRouteService.RouteFor(inst)); // hand-written route stays until the first deploy
@@ -143,10 +151,12 @@ public sealed class StackImportTests
 
         var site = await File.ReadAllTextAsync(Path.Combine(server.CaddyDir, "sites", "vp-internal.n8n-arm.arm-app-u01.caddy"));
         Assert.Contains("internal.n8n-arm.arm-app-u01 {", site);
-        Assert.Contains("tls internal", site);
-        Assert.Contains("reverse_proxy n8n-arm:5678", site);
-        Assert.False(File.Exists(Path.Combine(server.CaddyDir, "sites", "n8n.caddy")));
-        Assert.Single(Directory.GetFiles(Path.Combine(server.CaddyDir, ".vpanel-backup"), "n8n.caddy", SearchOption.AllDirectories));
+        Assert.DoesNotContain("tls internal", site); // provided by "import common"
+        Assert.Contains("\timport common\n", site);
+        Assert.Contains("\theader {\n\t\tX-Content-Type-Options \"nosniff\"\n\t\tReferrer-Policy \"strict-origin-when-cross-origin\"\n\t\t-Server\n\t}\n", site);
+        Assert.Contains("\treverse_proxy n8n-arm:5678\n}", site);
+        Assert.False(File.Exists(Path.Combine(server.CaddyDir, "sites", "n8n-arm.caddy")));
+        Assert.Single(Directory.GetFiles(Path.Combine(server.CaddyDir, ".vpanel-backup"), "n8n-arm.caddy", SearchOption.AllDirectories));
         Assert.True(File.Exists(Path.Combine(server.CaddyDir, "sites", "cxml.caddy"))); // untouched
 
         var after = (await host.Get<InstanceService>().GetAsync(inst.Id))!;
@@ -160,14 +170,14 @@ public sealed class StackImportTests
     [Fact]
     public async Task Pull_first_stack_keeps_published_images()
     {
-        var (host, _) = await SetupAsync();
+        var (host, server) = await SetupAsync();
         await using var __ = host;
         var importer = host.Get<StackImportService>();
         Assert.True((await importer.ImportAsync(new ImportRequest { ProjectName = "infra" }, "t")).Success);
         var r = await importer.ImportAsync(new ImportRequest { ProjectName = "cxml-dev-server" }, "t");
         Assert.True(r.Success, string.Join("; ", r.Errors));
         Assert.Equal(BuildMode.PullFirst, r.Value!.Instance.BuildMode);
-        Assert.Null(r.Value.Instance.PublicUrl);
+        Assert.Equal("https://internal.cxml.arm-app-u01", r.Value.Instance.PublicUrl);
 
         var job = await host.Get<DeploymentService>().EnqueueAsync(r.Value.Instance.Id, DeploymentAction.Deploy, "t");
         await host.Get<DeploymentWorker>().RunJobAsync(job.Value!.Id, default);
@@ -176,13 +186,21 @@ public sealed class StackImportTests
         Assert.DoesNotContain("--ignore-buildable", pull.Arguments);
         var up = host.Runner.Calls.Last(c => FakeProcessRunner.IsCompose(c.Arguments, "up"));
         Assert.DoesNotContain("--build", up.Arguments);
+
+        // cxml's site is taken over too, with its health checks and headers
+        var site = await File.ReadAllTextAsync(Path.Combine(server.CaddyDir, "sites", "vp-internal.cxml.arm-app-u01.caddy"));
+        Assert.Contains("\treverse_proxy cxml-app:8080 {\n\t\thealth_uri /health\n\t\thealth_interval 15s\n\t\thealth_timeout 5s\n\t}\n", site);
+        Assert.Contains("\t\tStrict-Transport-Security \"max-age=31536000\"", site);
+        Assert.False(File.Exists(Path.Combine(server.CaddyDir, "sites", "cxml.caddy")));
     }
 
     [Fact]
-    public async Task Public_url_served_by_a_complex_site_is_refused()
+    public async Task Public_url_served_by_a_site_with_routing_is_refused()
     {
-        var (host, _) = await SetupAsync();
+        var (host, server) = await SetupAsync();
         await using var __ = host;
+        await File.WriteAllTextAsync(Path.Combine(server.CaddyDir, "sites", "cxml.caddy"),
+            "internal.cxml.arm-app-u01 {\n\timport common\n\thandle_path /api/* {\n\t\treverse_proxy api:9000\n\t}\n\treverse_proxy cxml-app:8080\n}\n");
         var importer = host.Get<StackImportService>();
         Assert.True((await importer.ImportAsync(new ImportRequest { ProjectName = "infra" }, "t")).Success);
         var r = await importer.ImportAsync(new ImportRequest { ProjectName = "cxml-dev-server", PublicUrl = "https://internal.cxml.arm-app-u01" }, "t");
@@ -201,7 +219,7 @@ public sealed class StackImportTests
         Assert.True((await host.Get<InstanceService>().DeleteAsync(r.Value!.Instance.Id, "t")).Success);
         Assert.Equal(calls, host.Runner.Calls.Count);
         Assert.DoesNotContain((await host.Get<AppService>().ListAsync()), a => a.App.Slug == "n8n-arm");
-        Assert.True(File.Exists(Path.Combine(server.CaddyDir, "sites", "n8n.caddy")));
+        Assert.True(File.Exists(Path.Combine(server.CaddyDir, "sites", "n8n-arm.caddy")));
         Assert.NotNull((await host.Get<StackScanner>().ScanAsync()).Find("n8n-arm")); // can be imported again
     }
 

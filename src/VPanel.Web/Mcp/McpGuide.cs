@@ -164,14 +164,17 @@ public static class McpGuide
            installer `--adopt`): tell the user, do not work around it.
         2. `import_stack` the infrastructure first (`importInfraFirst`), then each app. Nothing is restarted; the instance
            keeps its folder, compose project, named volumes and networks. A service already on the shared network with an
-           alias keeps it as the route upstream (no override file, no recreate). `build_mode: pull_first` keeps the usual
+           alias keeps it as the route upstream (no override file, no recreate). A hand-written Caddy site with one
+           `reverse_proxy host:port` (no handle/route/redir/matchers) is taken over with its other directives
+           (`proxyDirectives`, e.g. `import common`, `header {...}`) and reverse_proxy options (`proxyOptions`, e.g. health
+           checks) kept verbatim; edit them later with save_instance. `build_mode: pull_first` keeps the usual
            `docker compose pull && up -d` behaviour for services with both `image:` and `build:`. `tls_internal` for
            internal hostnames served with Caddy's local CA.
         3. `preview_deploy` on the instance: services marked `recreate` will restart on the first deploy (data is kept).
            Ask the user before deploying when anything would be recreated.
         4. `run_instance_action(deploy)` once. It writes v-panel's files (the import already copied the original compose
-           file and .env to `.vpanel-backup/` in the folder) and, when the Public URL was served by a simple hand-written
-           Caddy site, replaces that site with a generated one in the same Caddy reload.
+           file and .env to `.vpanel-backup/` in the folder) and, when the Public URL was served by a hand-written Caddy
+           site that can be taken over, replaces that site with a generated one in the same Caddy reload.
         `delete_instance` on an imported instance that was never deployed only forgets it (containers untouched).
 
         ## Lifecycle actions

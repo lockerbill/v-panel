@@ -24,7 +24,7 @@ public sealed class ProxyRouteService(IDbContextFactory<VPanelDbContext> dbFacto
         if (string.IsNullOrWhiteSpace(i.PublicUrl) || !UrlHelper.TryParse(i.PublicUrl, out _)) return null;
         if (i.EffectiveProxyService is not { Length: > 0 } svc || i.EffectiveProxyPort is not { } port) return null;
         var alias = string.IsNullOrWhiteSpace(i.DeployedProxyAlias) ? ComposeRenderer.ProxyAlias(i, svc) : i.DeployedProxyAlias;
-        return new ProxyRoute(i.ProjectName, i.PublicUrl, $"{alias}:{port}", i.TlsInternal);
+        return new ProxyRoute(i.ProjectName, i.PublicUrl, $"{alias}:{port}", i.TlsInternal, i.ProxyDirectives, i.ProxyOptions);
     }
 
     public async Task<IReadOnlyList<ProxyRoute>> DesiredRoutesAsync(PanelSettings settings, CancellationToken ct, int? takeoverInstanceId = null)

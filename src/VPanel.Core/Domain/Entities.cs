@@ -114,6 +114,15 @@ public class AppInstance : Entity
     /// <summary>Caddy serves this instance with its internal CA (<c>tls internal</c>), for hostnames without public certificates.</summary>
     public bool TlsInternal { get; set; }
 
+    /// <summary>
+    /// Extra Caddy directives placed in the generated site block before <c>reverse_proxy</c> (e.g. <c>import common</c>,
+    /// <c>header { ... }</c>). Carried over from a hand-written site when it is taken over.
+    /// </summary>
+    public string? ProxyDirectives { get; set; }
+
+    /// <summary>Body of the generated <c>reverse_proxy { ... }</c> block (e.g. health checks).</summary>
+    public string? ProxyOptions { get; set; }
+
     /// <summary>Network alias of the proxy service used by the last successful deploy (route upstream host).</summary>
     public string? DeployedProxyAlias { get; set; }
 

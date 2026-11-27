@@ -44,6 +44,14 @@
         <MudSwitch T="bool" @bind-Value="Model.TlsInternal" Color="Color.Primary"
                    Label="Caddy internal CA (tls internal) for this host: for internal names without public certificates" />
     </MudItem>
+    <MudItem xs="12" md="7">
+        <MudTextField T="string" @bind-Value="Model.ProxyDirectives" Label="Caddy site directives (optional)" Variant="Variant.Outlined" Lines="6" Class="vp-mono-input"
+                      HelperText="Extra directives in the generated site, before reverse_proxy: e.g. import common, header { … }. No routing (handle, redir, matchers)." />
+    </MudItem>
+    <MudItem xs="12" md="5">
+        <MudTextField T="string" @bind-Value="Model.ProxyOptions" Label="reverse_proxy options (optional)" Variant="Variant.Outlined" Lines="6" Class="vp-mono-input"
+                      HelperText="Inside reverse_proxy { … }: e.g. health_uri /health. No 'to'." />
+    </MudItem>
 
     <MudItem xs="12">
         <MudText Typo="Typo.subtitle1" Class="mb-1"><b>Environment overrides</b></MudText>

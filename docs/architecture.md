@@ -116,7 +116,8 @@ Mục tiêu: nhận quản lý stack cài tay từ trước mà không di chuy�
   - Từ stack đó suy ra container Caddy, thư mục mount vào `/etc/caddy`, shared network (network của Caddy; nếu Caddy ở nhiều network thì chọn network mà nhiều stack khác cũng join) và ingress (có cloudflared và Caddy không publish 80/443 thì là tunnel).
 - **`CaddySiteParser`**:
   - Đọc Caddyfile theo luật dấu ngoặc của Caddy: dấu ngoặc chỉ mở hoặc đóng block khi đứng thành token riêng, nên placeholder như `{remote_host}` không bị nhầm.
-  - Nhận diện site "đơn giản": một địa chỉ, một `reverse_proxy host:port`, có thể kèm `tls internal`/`encode`.
+  - Nhận diện site "take over được": một địa chỉ, đúng một `reverse_proxy host:port` (không matcher, không `to`), không có directive định tuyến (`handle`, `route`, `redir`, matcher `@…`...).
+  - Tách thân site thành từng directive, cắt từ text gốc nên comment được giữ: `reverse_proxy` cho ra upstream, block con của nó thành `ProxyOptions`, phần còn lại thành `ProxyDirectives`. Hai trường này được lưu trên instance và ghi lại nguyên văn vào site sinh ra (`CaddyConfigBuilder`). Khi lưu instance, `ValidateDirectives` kiểm tra ngoặc cân bằng và chặn directive định tuyến.
   - Gỡ được một site block ra khỏi file.
 - **`StackImportService`**:
   - Backup compose và `.env` gốc vào `.vpanel-backup/`.

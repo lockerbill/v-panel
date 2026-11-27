@@ -82,6 +82,8 @@ public static class ComposeRenderer
         string?[] parts = [compose, envText, overrideYaml, instance.PublicUrl, proxySvc, instance.EffectiveProxyPort?.ToString(), instance.InstallPath];
         // Options added later only take part when set, so hashes of existing instances stay the same.
         if (instance.TlsInternal) parts = [.. parts, "tls:internal"];
+        if (!string.IsNullOrWhiteSpace(instance.ProxyDirectives)) parts = [.. parts, "directives:" + instance.ProxyDirectives];
+        if (!string.IsNullOrWhiteSpace(instance.ProxyOptions)) parts = [.. parts, "proxy-options:" + instance.ProxyOptions];
         if (instance.BuildMode != BuildMode.Build) parts = [.. parts, $"build:{instance.BuildMode}"];
         if (instance.ComposeFileName is { Length: > 0 } file && file != AppInstance.DefaultComposeFile) parts = [.. parts, $"file:{file}"];
         var hash = Hashing.Sha256(parts);

@@ -189,14 +189,19 @@ public sealed class StackScanner(
             var service = MatchUpstream(stack, host, sharedNetwork);
             if (service is null) continue;
             var warnings = stack.Warnings.ToList();
-            if (!site.IsSimple)
-                warnings.Add($"Caddy site '{site.Address}' ({site.File}:{site.Line}) is not a plain reverse proxy ({site.Reason}); it stays hand-written.");
+            if (!site.CanTakeOver)
+                warnings.Add($"Caddy site '{site.Address}' ({site.File}:{site.Line}) cannot be taken over ({site.Reason}); it stays hand-written.");
+            // Directives are carried over verbatim; when they decide TLS (tls / import of a snippet), no extra tls line is generated.
+            var directivesHandleTls = CaddySiteParser.HandlesTls(site.Directives);
             return stack with
             {
                 ProxyService = service.Name,
                 ProxyPort = port,
-                PublicUrl = site.IsSimple ? CaddySiteParser.PublicUrl(site.Addresses[0]) : null,
-                TlsInternal = site.TlsInternal,
+                PublicUrl = site.CanTakeOver ? CaddySiteParser.PublicUrl(site.Addresses[0]) : null,
+                TlsInternal = site.CanTakeOver && !directivesHandleTls && site.TlsInternal,
+                ProxyDirectives = site.CanTakeOver ? site.Directives : null,
+                ProxyOptions = site.CanTakeOver ? site.ProxyOptions : null,
+                TlsNote = TlsNote(site),
                 ManualSite = site,
                 Warnings = warnings,
             };
@@ -208,6 +213,12 @@ public sealed class StackScanner(
             ProxyService = onShared.Name,
             ProxyPort = onShared.ContainerPorts.Count == 1 ? onShared.ContainerPorts[0] : null,
         };
+    }
+
+    private static string? TlsNote(CaddySiteBlock site)
+    {
+        if (site.TlsInternal) return "tls internal (in the site)";
+        return site.TlsViaSnippet is { } snippet ? $"tls internal (from snippet '{snippet}')" : null;
     }
 
     /// <summary>Service of <paramref name="stack"/> that a Caddy upstream host designates on the shared network.</summary>
@@ -241,6 +252,7 @@ public sealed class StackScanner(
     internal static List<CaddySiteBlock> ReadManualSites(PanelSettings s, List<string> warnings)
     {
         var sites = new List<CaddySiteBlock>();
+        var snippets = new Dictionary<string, bool>(StringComparer.Ordinal);
         if (!File.Exists(s.CaddyMainFile)) return sites;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<string>([s.CaddyMainFile]);
@@ -252,12 +264,16 @@ public sealed class StackScanner(
             try { text = File.ReadAllText(file); }
             catch (Exception ex) { warnings.Add($"Cannot read {file}: {ex.Message}"); continue; }
             var model = CaddySiteParser.Parse(text, file);
+            foreach (var sn in model.Snippets) if (sn.SnippetName is { } n) snippets[n] = sn.SnippetHasTlsInternal;
             sites.AddRange(model.Sites);
             foreach (var pattern in model.ImportPatterns)
                 foreach (var f in ResolveImport(pattern, file, s))
                     queue.Enqueue(f);
         }
-        return sites;
+        return sites.Select(site => site with
+        {
+            TlsViaSnippet = site.Imports?.FirstOrDefault(i => snippets.GetValueOrDefault(i)),
+        }).ToList();
     }
 
     /// <summary>Host files matched by an import pattern written for the Caddy container (only inside the Caddy folder).</summary>

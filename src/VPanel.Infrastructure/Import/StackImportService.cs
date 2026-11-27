@@ -60,6 +60,7 @@ public sealed class StackImportService(
         var publicUrl = request.PublicUrl ?? (isInfra ? null : stack.PublicUrl);
         publicUrl = string.IsNullOrWhiteSpace(publicUrl) ? null : publicUrl.Trim();
         ManualSiteRef? takeover = null;
+        CaddySiteBlock? takenOver = null;
         if (publicUrl is not null)
         {
             if (!UrlHelper.TryParse(publicUrl, out var uri)) return Result<ImportOutcome>.Fail("Public URL is not a valid http(s) URL.");
@@ -67,12 +68,14 @@ public sealed class StackImportService(
             var clash = scan.ManualSites.FirstOrDefault(s => s.Addresses.Any(a => SameSite(a, uri)));
             if (clash is not null)
             {
-                if (!clash.IsSimple)
-                    return Result<ImportOutcome>.Fail($"{publicUrl} is served by a hand-written Caddy site ({clash.File}:{clash.Line}) that v-panel cannot take over ({clash.Reason}). Leave the public URL empty, or simplify that site first.");
+                if (!clash.CanTakeOver)
+                    return Result<ImportOutcome>.Fail($"{publicUrl} is served by a hand-written Caddy site ({clash.File}:{clash.Line}) that v-panel cannot take over ({clash.Reason}). Leave the public URL empty to keep that site hand-written.");
                 if (!request.TakeOverSite)
                     return Result<ImportOutcome>.Fail($"{publicUrl} is already served by {clash.File}:{clash.Line}. Enable 'take over' or leave the public URL empty.");
                 takeover = new ManualSiteRef(clash.File, clash.Addresses[0]);
-                notes.Add($"On the first deploy, the Caddy site '{clash.Addresses[0]}' in {clash.File} is replaced by a generated one ({address}).");
+                takenOver = clash;
+                notes.Add($"On the first deploy, the Caddy site '{clash.Addresses[0]}' in {clash.File} is replaced by a generated one ({address})" +
+                          (clash.Directives is null && clash.ProxyOptions is null ? "." : ", keeping its other directives and reverse_proxy options."));
             }
         }
 
@@ -140,7 +143,9 @@ public sealed class StackImportService(
             ComposeProjectName = stack.ProjectName,
             ComposeFileName = compose.FileName,
             BuildMode = request.BuildMode ?? stack.SuggestedBuildMode,
-            TlsInternal = request.TlsInternal ?? stack.TlsInternal,
+            TlsInternal = request.TlsInternal ?? (takenOver is not null ? takenOver.TlsInternal && !CaddySiteParser.HandlesTls(takenOver.Directives) : stack.TlsInternal),
+            ProxyDirectives = request.ProxyDirectives ?? takenOver?.Directives,
+            ProxyOptions = request.ProxyOptions ?? takenOver?.ProxyOptions,
         }, user, ct);
         if (!saved.Success)
         {

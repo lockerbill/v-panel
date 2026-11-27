@@ -234,13 +234,14 @@ Nếu VPS đã có shared-infra (Caddy, Postgres...) và các app docker compose
    - các site Caddy viết tay, kèm thông tin site đó trỏ tới app nào.
 3. Import **shared-infra trước**. v-panel cập nhật Settings theo stack này, bỏ template `shared-infra` mặc định (nếu chưa deploy lần nào) và thêm `import …/sites/vp-*.caddy` vào Caddyfile nếu còn thiếu (có backup và chạy validate).
 4. Import từng app. Proxy service/port, Public URL và `tls internal` được gợi ý từ site Caddy viết tay. Container vẫn chạy như cũ; compose và `.env` gốc được copy vào `<thư mục app>/.vpanel-backup/`.
-5. Trên mỗi instance vừa import, bấm **Preview deploy**: nó cho biết service nào sẽ bị recreate. Sau đó bấm **Deploy** một lần để v-panel quản lý hẳn. Lần deploy này ghi file của v-panel. Nếu Public URL đang do một site Caddy đơn giản phục vụ (chỉ có `reverse_proxy`, có thể kèm `tls internal`/`encode`), site đó được thay bằng file `vp-*.caddy` ngay trong cùng một lần reload. File cũ được chuyển vào `<thư mục Caddy>/.vpanel-backup/`.
+5. Trên mỗi instance vừa import, bấm **Preview deploy**: nó cho biết service nào sẽ bị recreate. Sau đó bấm **Deploy** một lần để v-panel quản lý hẳn. Lần deploy này ghi file của v-panel. Nếu Public URL đang do một site Caddy viết tay phục vụ, site đó được thay bằng file `vp-*.caddy` ngay trong cùng một lần reload. Các directive khác (`import common`, `header {…}`, `log`…) và option của `reverse_proxy` (health check…) được giữ nguyên văn. File cũ được chuyển vào `<thư mục Caddy>/.vpanel-backup/`.
 
 Lưu ý:
 
 - Service đã có alias trên shared network (`aliases: [n8n-arm]`) giữ nguyên alias đó làm upstream. v-panel không sinh `docker-compose.vpanel.yml`, nên container không bị recreate.
 - Stack vừa có `image:` vừa có `build:` nên dùng chế độ **Pull first** (gợi ý sẵn khi import). Chế độ này pull image đã publish và chỉ build những image còn thiếu, giống `docker compose pull && docker compose up -d`.
-- Site Caddy phức tạp (header, nhiều upstream, matcher...) được giữ nguyên là file viết tay. Instance đó để trống Public URL, hoặc anh tự đơn giản hoá site trước khi import.
+- Take over được khi site có một địa chỉ và đúng một `reverse_proxy host:port`. Site có định tuyến (`handle`, `handle_path`, `route`, `redir`, matcher `@…`, nhiều upstream) được giữ nguyên là file viết tay; instance đó để trống Public URL.
+- Directive và option giữ lại có thể sửa trong cấu hình instance (**Caddy site directives**, **reverse_proxy options**). Snippet như `(common)` vẫn nằm trong Caddyfile chính và dùng được trong file `vp-*.caddy`.
 - Instance import mà chưa deploy lần nào thì có thể "Stop managing": v-panel quên nó đi, container và file không bị đụng tới.
 - Chế độ systemd: khai báo `VPanel:AdoptedRoots` trong `/etc/vpanel/appsettings.json` và cấp quyền đọc/ghi các thư mục đó cho user `vpanel`.
 

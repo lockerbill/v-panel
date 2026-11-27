@@ -111,6 +111,15 @@ public sealed record ScannedStack
     public int? ProxyPort { get; init; }
     public string? PublicUrl { get; init; }
     public bool TlsInternal { get; init; }
+
+    /// <summary>Directives of the hand-written site carried over into the generated one (e.g. import common, header {...}).</summary>
+    public string? ProxyDirectives { get; init; }
+
+    /// <summary>Options of the hand-written reverse_proxy (e.g. health checks).</summary>
+    public string? ProxyOptions { get; init; }
+
+    /// <summary>How the hand-written site gets its TLS, for display.</summary>
+    public string? TlsNote { get; init; }
     public BuildMode SuggestedBuildMode { get; init; }
 
     /// <summary>Hand-written Caddy site routing to this stack (taken over on the first deploy when simple).</summary>
@@ -176,6 +185,12 @@ public sealed record ImportRequest
     public string? PublicUrl { get; init; }
     public bool? TlsInternal { get; init; }
     public BuildMode? BuildMode { get; init; }
+
+    /// <summary>Caddy directives of the generated site; null = carried over from the hand-written site.</summary>
+    public string? ProxyDirectives { get; init; }
+
+    /// <summary>reverse_proxy options of the generated site; null = carried over from the hand-written site.</summary>
+    public string? ProxyOptions { get; init; }
 
     /// <summary>Replace the hand-written Caddy site for the public URL by a generated one on the first deploy.</summary>
     public bool TakeOverSite { get; init; } = true;

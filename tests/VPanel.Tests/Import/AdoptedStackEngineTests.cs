@@ -119,5 +119,29 @@ public sealed class AdoptedStackEngineTests : IDisposable
         Assert.DoesNotContain("tls internal", tunnel.Values.Single());
     }
 
+    [Fact]
+    public void Generated_site_carries_directives_and_proxy_options()
+    {
+        var route = new ProxyRoute("cxml", "https://internal.cxml.arm-app-u01", "cxml-app:8080", TlsInternal: true,
+            Directives: "import common\n\nheader {\n\t-Server\n}\n", ProxyOptions: "health_uri /health\n");
+        var site = CaddyConfigBuilder.Build([route])["vp-internal.cxml.arm-app-u01.caddy"];
+        Assert.Contains("internal.cxml.arm-app-u01 {\n\timport common\n\n\theader {\n\t\t-Server\n\t}\n\n\treverse_proxy cxml-app:8080 {\n\t\thealth_uri /health\n\t}\n}\n", site);
+        Assert.DoesNotContain("tls internal", site); // the imported snippet decides TLS
+
+        var tunnel = CaddyConfigBuilder.Build([route with { TlsInternal = false }], IngressMode.CloudflareTunnel).Values.Single();
+        Assert.Contains("reverse_proxy cxml-app:8080 {\n\t\thealth_uri /health\n\t\theader_up X-Forwarded-Proto https\n\t}", tunnel);
+    }
+
+    [Fact]
+    public void Directives_change_the_config_hash_only_when_set()
+    {
+        var instance = TestData.Instance();
+        var before = ComposeRenderer.Render(instance, TestData.Settings()).ConfigHash;
+        instance.ProxyDirectives = "";
+        Assert.Equal(before, ComposeRenderer.Render(instance, TestData.Settings()).ConfigHash);
+        instance.ProxyDirectives = "import common\n";
+        Assert.NotEqual(before, ComposeRenderer.Render(instance, TestData.Settings()).ConfigHash);
+    }
+
     public void Dispose() => Directory.Delete(_root, true);
 }

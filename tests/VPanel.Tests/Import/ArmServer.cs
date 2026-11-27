@@ -132,9 +132,30 @@ internal sealed class ArmServer
 
         """;
 
+    // The real Caddy files of the server (verbatim).
     public const string MainCaddyfile = """
+        # Shared Caddy for every app on arm-app-u01.
+        #
+        # One file per app in sites/ (e.g. sites/n8n-arm.caddy). After any change:
+        #   cd /opt/infra
+        #   docker compose exec caddy caddy validate --config /etc/caddy/Caddyfile
+        #   docker compose exec caddy caddy reload   --config /etc/caddy/Caddyfile
+        #
+        # TLS: all internal.* names use "tls internal" = certificates from Caddy's own local CA
+        # (root = /opt/cxml-dev-server/cxml-ca-root.crt, also infra/ca/root.crt).
         {
-        	email ops@example.com
+        	# Caddy runs in a container: do not try to install the root CA into the container's trust store.
+        	skip_install_trust
+        }
+
+        # Shared snippets. Use inside a site with: import common
+        (common) {
+        	tls internal
+        	encode zstd gzip
+        	log {
+        		output stdout
+        		format console
+        	}
         }
 
         import sites/*.caddy
@@ -142,20 +163,43 @@ internal sealed class ArmServer
         """;
 
     public const string N8nSite = """
-        # n8n (stack /opt/n8n-arm)
+        # n8n (stack: /opt/n8n-arm)
         internal.n8n-arm.arm-app-u01 {
-        	tls internal
-        	encode zstd gzip
+        	import common
+
+        	# n8n uses WebSockets for the editor (push); reverse_proxy passes them through.
         	reverse_proxy n8n-arm:5678
+
+        	header {
+        		X-Content-Type-Options "nosniff"
+        		Referrer-Policy "strict-origin-when-cross-origin"
+        		-Server
+        	}
         }
 
         """;
 
     public const string CxmlSite = """
+        # cXML Dev Server (stack: /opt/cxml-dev-server)
+        # Moved here on 2026-11-18 from cxml-dev-server/Caddyfile (TLS_MODE=internal). Same rules as before.
         internal.cxml.arm-app-u01 {
-        	tls internal
-        	reverse_proxy cxml-app:8080
-        	header Strict-Transport-Security "max-age=31536000"
+        	import common
+
+        	# Blazor (SignalR over WebSockets) and plain HTTP both pass through reverse_proxy unchanged.
+        	# The app trusts X-Forwarded-For/-Proto, not X-Forwarded-Host.
+        	reverse_proxy cxml-app:8080 {
+        		health_uri /health
+        		health_interval 15s
+        		health_timeout 5s
+        	}
+
+        	header {
+        		Strict-Transport-Security "max-age=31536000"
+        		X-Content-Type-Options "nosniff"
+        		Referrer-Policy "strict-origin-when-cross-origin"
+        		# Deliberately NO X-Frame-Options / CSP: PunchOut runs in iframes, Blazor needs inline scripts + WebSockets.
+        		-Server
+        	}
         }
 
         """;
@@ -167,7 +211,7 @@ internal sealed class ArmServer
         File.WriteAllText(Path.Combine(Infra, "docker-compose.yml"), InfraCompose);
         File.WriteAllText(Path.Combine(Infra, ".env"), "POSTGRES_PASSWORD=secret\n");
         File.WriteAllText(Path.Combine(CaddyDir, "Caddyfile"), MainCaddyfile);
-        File.WriteAllText(Path.Combine(CaddyDir, "sites", "n8n.caddy"), N8nSite);
+        File.WriteAllText(Path.Combine(CaddyDir, "sites", "n8n-arm.caddy"), N8nSite);
         File.WriteAllText(Path.Combine(CaddyDir, "sites", "cxml.caddy"), CxmlSite);
         Directory.CreateDirectory(Path.Combine(N8n, "data"));
         File.WriteAllText(Path.Combine(N8n, "docker-compose.yml"), N8nCompose);

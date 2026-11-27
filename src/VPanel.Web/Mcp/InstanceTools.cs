@@ -64,6 +64,8 @@ public sealed class InstanceTools(
         [Description("Description.")] string? description = null,
         [Description("\"build\" (default: pull plain images, `up --build` rebuilds buildable services) or \"pull_first\" (pull every image, build only missing ones; for services with both image: and build:).")] string? build_mode = null,
         [Description("Serve the Public URL with Caddy's internal CA (`tls internal`), for internal hostnames without public certificates.")] bool? tls_internal = null,
+        [Description("Extra Caddy directives in the generated site before reverse_proxy, e.g. \"import common\" or a header block. No routing directives or matchers. Empty string to clear.")] string? proxy_directives = null,
+        [Description("Options inside the generated reverse_proxy block, e.g. \"health_uri /health\". Empty string to clear.")] string? proxy_options = null,
         CancellationToken ct = default)
     {
         AppInstance input;
@@ -100,6 +102,8 @@ public sealed class InstanceTools(
         if (description is not null) input.Description = description;
         if (build_mode is not null) input.BuildMode = ParseBuildMode(build_mode);
         if (tls_internal is not null) input.TlsInternal = tls_internal.Value;
+        if (proxy_directives is not null) input.ProxyDirectives = proxy_directives;
+        if (proxy_options is not null) input.ProxyOptions = proxy_options;
 
         var saved = McpContext.Unwrap(await instances.SaveAsync(input, ctx.User, ct), "Saving the instance");
         return await DescribeAsync(await ctx.RequireInstanceAsync(saved.Id.ToString(), ct), includeContainers: false, ct);
@@ -224,7 +228,7 @@ public sealed class InstanceTools(
             i.PublicUrl, i.InstallPath, i.ProjectName, i.ProxyService, i.ProxyPort, proxyService, i.EffectiveProxyPort,
             alias, i.EnvOverrides, i.ComposeOverride,
             instances.HasUndeployedChanges(i), i.LastDeployedAt, containers, recent, i.BuildMode.ToString(), i.TlsInternal, i.IsImported,
-            i.IsAwaitingFirstDeploy, takeover is null ? null : $"{takeover.Address} in {takeover.File}");
+            i.IsAwaitingFirstDeploy, takeover is null ? null : $"{takeover.Address} in {takeover.File}", i.ProxyDirectives, i.ProxyOptions);
     }
 
 

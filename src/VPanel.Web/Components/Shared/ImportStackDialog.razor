@@ -32,10 +32,25 @@
                 </MudItem>
                 <MudItem xs="12" md="6">
                     <MudSwitch T="bool" @bind-Value="_tlsInternal" Color="Color.Primary" Label="tls internal (Caddy local CA)" />
+                    @if (Stack.TlsNote is { } note)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Hand-written site: @note@(_directives is { Length: > 0 } ? "; kept through the directives below" : "")</MudText>
+                    }
                 </MudItem>
                 <MudItem xs="12" md="6">
-                    <MudSwitch T="bool" @bind-Value="_takeOver" Color="Color.Primary" Disabled="Stack.ManualSite is not { IsSimple: true }"
+                    <MudSwitch T="bool" @bind-Value="_takeOver" Color="Color.Primary" Disabled="Stack.ManualSite is not { CanTakeOver: true }"
                                Label="Take over the hand-written Caddy site on first deploy" />
+                </MudItem>
+            }
+            @if (!IsInfra)
+            {
+                <MudItem xs="12" md="7">
+                    <MudTextField T="string" @bind-Value="_directives" Label="Caddy site directives" Variant="Variant.Outlined" Lines="8" Class="vp-mono-input"
+                                  HelperText="Placed in the generated site before reverse_proxy (from the hand-written site)." />
+                </MudItem>
+                <MudItem xs="12" md="5">
+                    <MudTextField T="string" @bind-Value="_proxyOptions" Label="reverse_proxy options" Variant="Variant.Outlined" Lines="8" Class="vp-mono-input"
+                                  HelperText="Inside reverse_proxy { … }, e.g. health checks." />
                 </MudItem>
             }
             <MudItem xs="12">
@@ -75,6 +90,8 @@
     private int? _proxyPort;
     private bool _tlsInternal;
     private bool _takeOver = true;
+    private string? _directives;
+    private string? _proxyOptions;
     private BuildMode _buildMode;
 
     protected override void OnInitialized()
@@ -85,8 +102,10 @@
         _proxyService = Stack.ProxyService;
         _proxyPort = Stack.ProxyPort;
         _tlsInternal = Stack.TlsInternal;
-        _takeOver = Stack.ManualSite is { IsSimple: true };
+        _takeOver = Stack.ManualSite is { CanTakeOver: true };
         _buildMode = Stack.SuggestedBuildMode;
+        _directives = Stack.ProxyDirectives;
+        _proxyOptions = Stack.ProxyOptions;
     }
 
     private void Confirm() => MudDialog.Close(DialogResult.Ok(new ImportRequest
@@ -100,5 +119,7 @@
         TlsInternal = _tlsInternal,
         TakeOverSite = _takeOver,
         BuildMode = _buildMode,
+        ProxyDirectives = IsInfra ? null : _directives ?? "",
+        ProxyOptions = IsInfra ? null : _proxyOptions ?? "",
     }));
 }

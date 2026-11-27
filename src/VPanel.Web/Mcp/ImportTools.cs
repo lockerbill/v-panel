@@ -37,7 +37,8 @@ public sealed class ImportTools(
             scan.InfraManaged,
             scan.Infra is { SharedNetwork: { } net } && net != s.SharedNetwork,
             scan.Stacks.Select(ToDto).ToList(),
-            scan.ManualSites.Select(m => new CaddySiteDto(m.Address, m.Upstream, m.File, m.Line, m.TlsInternal, m.IsSimple, m.Reason)).ToList(),
+            scan.ManualSites.Select(m => new CaddySiteDto(m.Address, m.Upstream, m.File, m.Line, m.TlsInternal, m.CanTakeOver, m.Reason,
+                m.Directives, m.ProxyOptions)).ToList(),
             scan.ManagedProjects, s.AdoptedRoots, scan.Warnings);
     }
 
@@ -58,6 +59,8 @@ public sealed class ImportTools(
         [Description("Use Caddy's internal CA (tls internal) for the Public URL.")] bool? tls_internal = null,
         [Description("build | pull_first. Default: pull_first when a service has both image: and build:.")] string? build_mode = null,
         [Description("Replace the hand-written Caddy site serving the Public URL on the first deploy (default true).")] bool take_over_site = true,
+        [Description("Caddy directives of the generated site (default: the hand-written site's directives other than reverse_proxy). Empty string for none.")] string? proxy_directives = null,
+        [Description("Options inside the generated reverse_proxy block (default: the hand-written site's). Empty string for none.")] string? proxy_options = null,
         CancellationToken ct = default)
     {
         var result = McpContext.Unwrap(await importer.ImportAsync(new ImportRequest
@@ -71,6 +74,8 @@ public sealed class ImportTools(
             TlsInternal = tls_internal,
             BuildMode = build_mode is null ? null : InstanceTools.ParseBuildMode(build_mode),
             TakeOverSite = take_over_site,
+            ProxyDirectives = proxy_directives,
+            ProxyOptions = proxy_options,
         }, ctx.User, ct), $"Importing '{project}'");
         var instance = await ctx.RequireInstanceAsync(result.Instance.Id.ToString(), ct);
         return new ImportResultDto(await InstanceTools.DescribeAsync(instance, false, registry, deployments, settings, instances, ct), result.Notes);
@@ -92,5 +97,6 @@ public sealed class ImportTools(
             x.Networks.Select(n => n.Aliases.Count > 0 ? $"{n.Name} ({string.Join(", ", n.Aliases)})" : n.Name).ToList(), x.ContainerPorts)).ToList(),
         s.SuggestedSlug, s.ProxyService, s.ProxyPort, s.PublicUrl, s.TlsInternal,
         s.SuggestedBuildMode == BuildMode.PullFirst ? "pull_first" : "build",
-        s.ManualSite is { } m ? $"{m.Address} ({m.File}:{m.Line})" : null, s.ManualSite?.IsSimple ?? false, s.ConfigError, s.Warnings);
+        s.ManualSite is { } m ? $"{m.Address} ({m.File}:{m.Line})" : null, s.ManualSite?.CanTakeOver ?? false, s.ProxyDirectives, s.ProxyOptions,
+        s.TlsNote, s.ConfigError, s.Warnings);
 }

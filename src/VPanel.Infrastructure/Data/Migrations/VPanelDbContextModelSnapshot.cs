@@ -177,6 +177,12 @@ namespace VPanel.Infrastructure.Data.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ProxyDirectives")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProxyOptions")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("ProxyPort")
                         .HasColumnType("INTEGER");
 

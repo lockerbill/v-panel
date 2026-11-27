@@ -63,19 +63,21 @@ public sealed record InstanceDetail(int Id, string Slug, string Name, string? De
     string? EffectiveProxyService, int? EffectiveProxyPort, string? ProxyAlias, string EnvOverrides, string? ComposeOverride,
     bool HasUndeployedChanges, DateTimeOffset? LastDeployedAt, IReadOnlyList<ContainerDto>? Containers,
     IReadOnlyList<DeploymentListItem> RecentDeployments, string BuildMode, bool TlsInternal, bool Imported, bool AwaitingFirstDeploy,
-    string? PendingCaddyTakeover);
+    string? PendingCaddyTakeover, string? ProxyDirectives, string? ProxyOptions);
 
 public sealed record ScannedServiceDto(string Name, string? Image, bool HasBuild, IReadOnlyList<string> Networks, IReadOnlyList<int> Ports);
 
 public sealed record ScannedStackDto(string Project, string Kind, string? Folder, IReadOnlyList<string> ComposeFiles, string Status,
     bool CanImport, bool Accessible, bool InAllowedRoot, string? SuggestedRoot, IReadOnlyList<ScannedServiceDto> Services,
     string SuggestedSlug, string? ProxyService, int? ProxyPort, string? PublicUrl, bool TlsInternal, string SuggestedBuildMode,
-    string? CaddySite, bool CaddySiteCanBeTakenOver, string? ConfigError, IReadOnlyList<string> Warnings);
+    string? CaddySite, bool CaddySiteCanBeTakenOver, string? ProxyDirectives, string? ProxyOptions, string? TlsNote, string? ConfigError,
+    IReadOnlyList<string> Warnings);
 
 public sealed record InfraDto(string Project, string? SharedNetwork, string? CaddyContainer, bool CaddyRunning, string? CaddyDir,
     string? CaddyConfigDirInContainer, string Ingress, string? Postgres, IReadOnlyList<string> Warnings);
 
-public sealed record CaddySiteDto(string Address, string? Upstream, string File, int Line, bool TlsInternal, bool CanBeTakenOver, string? Reason);
+public sealed record CaddySiteDto(string Address, string? Upstream, string File, int Line, bool TlsInternal, bool CanBeTakenOver, string? Reason,
+    string? Directives, string? ProxyOptions);
 
 public sealed record ScanDto(bool DockerReachable, string? Error, InfraDto? Infra, bool InfraManaged, bool ImportInfraFirst,
     IReadOnlyList<ScannedStackDto> Stacks, IReadOnlyList<CaddySiteDto> CaddySites, IReadOnlyList<string> ManagedProjects,

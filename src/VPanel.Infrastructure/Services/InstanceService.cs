@@ -81,6 +81,8 @@ public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory
             errors.Add("Compose project name may only contain lowercase letters, digits, '-' and '_'.");
         if (input.ComposeFileName is { Length: > 0 } file && (file.Contains('/') || file.Contains('\\') || file.StartsWith('.')))
             errors.Add("Compose file name must be a plain file name.");
+        errors.AddRange(Proxy.CaddySiteParser.ValidateDirectives(input.ProxyDirectives, proxyOptions: false));
+        errors.AddRange(Proxy.CaddySiteParser.ValidateDirectives(input.ProxyOptions, proxyOptions: true));
         if (!string.IsNullOrWhiteSpace(input.PublicUrl) && !UrlHelper.TryParse(input.PublicUrl, out _))
             errors.Add("Public URL is not a valid http(s) URL.");
         if (input.ProxyPort is < 1 or > 65535) errors.Add("Proxy port must be between 1 and 65535.");
@@ -120,6 +122,8 @@ public sealed class InstanceService(IDbContextFactory<VPanelDbContext> dbFactory
         entity.ComposeFileName = string.IsNullOrWhiteSpace(input.ComposeFileName) ? null : input.ComposeFileName.Trim();
         entity.BuildMode = input.BuildMode;
         entity.TlsInternal = input.TlsInternal;
+        entity.ProxyDirectives = string.IsNullOrWhiteSpace(input.ProxyDirectives) ? null : AppService.Normalize(input.ProxyDirectives).TrimEnd() + "\n";
+        entity.ProxyOptions = string.IsNullOrWhiteSpace(input.ProxyOptions) ? null : AppService.Normalize(input.ProxyOptions).TrimEnd() + "\n";
         entity.Name = input.Name;
         entity.Slug = input.Slug;
         entity.Description = input.Description?.Trim();

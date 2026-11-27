@@ -4,7 +4,10 @@ namespace VPanel.Core.Abstractions;
 
 /// <summary>A public URL routed to an upstream (host:port reachable from the proxy).</summary>
 /// <param name="TlsInternal">Serve the site with the proxy's internal CA instead of a public certificate.</param>
-public sealed record ProxyRoute(string Id, string PublicUrl, string Upstream, bool TlsInternal = false);
+/// <param name="Directives">Extra site directives (proxy syntax), placed before the generated reverse proxy.</param>
+/// <param name="ProxyOptions">Options inside the generated reverse proxy block.</param>
+public sealed record ProxyRoute(string Id, string PublicUrl, string Upstream, bool TlsInternal = false, string? Directives = null,
+    string? ProxyOptions = null);
 
 /// <summary>A hand-written site (one address in one config file) removed in the same apply that starts serving it.</summary>
 public sealed record ManualSiteRemoval(string File, string Address);
