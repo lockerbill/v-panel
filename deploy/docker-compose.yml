@@ -31,4 +31,6 @@ services:
 networks:
   shared:
     external: true
-    name: vpanel-shared
+    # The shared network of the Caddy stack: vpanel-shared, or the existing one on servers adopted with --adopt
+    # (set in /opt/vpanel/vpanel.env, passed with --env-file by docker-install.sh).
+    name: ${VPANEL_SHARED_NETWORK:-vpanel-shared}

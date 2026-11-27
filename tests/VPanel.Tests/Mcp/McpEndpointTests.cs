@@ -90,7 +90,7 @@ public sealed class McpEndpointTests : IAsyncLifetime
         var tools = (await client.ListToolsAsync()).Select(t => t.Name).ToHashSet();
         foreach (var name in new[] { "get_panel_info", "get_install_guide", "validate_compose", "list_apps", "get_app", "save_app", "delete_app",
                      "list_instances", "get_instance", "save_instance", "run_instance_action", "remove_instance", "delete_instance",
-                     "list_deployments", "get_deployment", "get_container_logs" })
+                     "list_deployments", "get_deployment", "get_container_logs", "scan_existing_stacks", "import_stack", "preview_deploy" })
             Assert.Contains(name, tools);
 
         var prompt = await client.GetPromptAsync("install_app_from_repo",
@@ -185,6 +185,17 @@ public sealed class McpEndpointTests : IAsyncLifetime
         var audit = await _factory.Services.GetRequiredService<AuditService>().RecentAsync(50);
         Assert.Contains(audit, a => a is { User: "mcp:test-agent", Action: "app.create", Target: "notes" });
         Assert.Contains(audit, a => a is { User: "mcp:test-agent", Action: "instance.deploy", Target: "notes-01" });
+    }
+
+    [Fact]
+    public async Task Scan_reports_no_stacks_on_a_fresh_server_and_import_explains_why()
+    {
+        await using var client = await ConnectAsync();
+        var scan = await CallAsync(client, "scan_existing_stacks", []);
+        Assert.True(scan.GetProperty("dockerReachable").GetBoolean());
+        Assert.Empty(scan.GetProperty("stacks").EnumerateArray());
+        var error = await CallErrorAsync(client, "import_stack", new() { ["project"] = "nope" });
+        Assert.Contains("No unmanaged compose project named 'nope'", error);
     }
 
     [Fact]

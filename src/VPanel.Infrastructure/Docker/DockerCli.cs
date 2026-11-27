@@ -13,10 +13,14 @@ public sealed class DockerCli(IProcessRunner runner, IOptions<VPanelOptions> opt
         TimeSpan? timeout = null, CancellationToken ct = default) =>
         runner.RunAsync(new ProcessSpec(Binary, args.ToList()) { WorkingDirectory = workingDir, Timeout = timeout }, onOutput, ct);
 
-    public static List<string> ComposeArgs(string project, string dir, bool withOverride, params string[] tail)
+    public static List<string> ComposeArgs(string project, string dir, bool withOverride, params string[] tail) =>
+        ComposeArgs(project, dir, RenderedInstance.ComposeFile, withOverride, tail);
+
+    /// <param name="composeFile">Compose file name inside <paramref name="dir"/> (imported stacks keep their own, e.g. compose.yaml).</param>
+    public static List<string> ComposeArgs(string project, string dir, string composeFile, bool withOverride, params string[] tail)
     {
         var args = new List<string> { "compose", "--ansi", "never", "--progress", "plain", "-p", project,
-            "--project-directory", dir, "-f", Path.Combine(dir, RenderedInstance.ComposeFile) };
+            "--project-directory", dir, "-f", Path.Combine(dir, composeFile) };
         if (withOverride) args.AddRange(["-f", Path.Combine(dir, RenderedInstance.OverrideFile)]);
         args.AddRange(["--env-file", Path.Combine(dir, RenderedInstance.EnvFileName)]);
         args.AddRange(tail);

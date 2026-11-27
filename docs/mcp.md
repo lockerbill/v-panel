@@ -99,18 +99,32 @@ App và instance được tham chiếu bằng id hoặc slug.
 | `save_app` | Tạo app, hoặc sửa từng trường của app có sẵn (trường không truyền giữ nguyên) |
 | `delete_app` | Xoá app không còn instance (không xoá được app hệ thống `shared-infra`) |
 | `list_instances`, `get_instance` | Trạng thái, URL, proxy alias, container đang chạy, các lần deploy gần đây |
-| `save_instance` | Tạo hoặc sửa instance: Public URL, `.env` override, compose override, proxy |
+| `save_instance` | Tạo hoặc sửa instance: Public URL, `.env` override, compose override, proxy, `build_mode` (`build` / `pull_first`), `tls_internal`, `proxy_directives` và `proxy_options` (directive Caddy thêm vào site sinh ra) |
 | `run_instance_action` | `deploy`, `start`, `stop`, `restart`, `down`, có thể chờ job xong rồi trả log |
 | `remove_instance` | Gỡ container và route, tuỳ chọn xoá volume (mất dữ liệu) và thư mục cài |
 | `delete_instance` | Xoá bản ghi instance đã remove hoặc chưa deploy |
 | `list_deployments`, `get_deployment` | Lịch sử job và log (log trực tiếp khi job đang chạy) |
 | `get_container_logs` | Log container của instance (`docker compose logs --tail`) |
+| `scan_existing_stacks` | Chỉ đọc: tìm stack compose cài tay chưa được quản lý, shared-infra (Caddy) cùng setting sẽ áp dụng, site Caddy viết tay và stack mà mỗi site trỏ tới |
+| `import_stack` | Nhận quản lý một stack tại chỗ (giữ thư mục, tên project, volume), không restart gì. Import shared-infra trước |
+| `preview_deploy` | Liệt kê service mà lần deploy tới sẽ `keep` / `recreate` / `create` / `remove` |
 
 Prompt: `install_app_from_repo(repo_url, public_url?, instance_name?)`.
 
 Agent được làm mọi thao tác như admin, kể cả xoá. Hướng dẫn gửi kèm yêu cầu agent hỏi anh trước khi làm thao tác phá huỷ (xoá volume, xoá app/instance, sửa `shared-infra`). Mọi thao tác đều ghi audit log với user `mcp:<tên token>`, và lịch sử deploy ghi *Triggered by* tương ứng.
 
-## 5. Kiểm tra nhanh bằng curl
+## 5. Nhận quản lý stack có sẵn
+
+Trên VPS đã có shared-infra và app compose cài tay (v-panel cài bằng `docker-install.sh --adopt`), agent làm theo thứ tự:
+
+1. `scan_existing_stacks`. Stack có `canImport: false` thì báo anh (thường là thư mục chưa được mount), không tự lách.
+2. `import_stack(project: "<infra>")` trước (khi `importInfraFirst` là true), rồi `import_stack` cho từng app. Tham số không truyền thì dùng giá trị gợi ý từ scan.
+3. `preview_deploy(instance)`. Có service `recreate` thì hỏi anh trước khi deploy.
+4. `run_instance_action(instance, "deploy")`, một lần cho mỗi stack. Lần deploy này thay site Caddy viết tay bằng site sinh ra, giữ nguyên các directive khác và option của `reverse_proxy`.
+
+Hướng dẫn đầy đủ cho người: [migrate-existing-vps.md](migrate-existing-vps.md).
+
+## 6. Kiểm tra nhanh bằng curl
 
 ```bash
 curl -s http://localhost:5080/mcp \

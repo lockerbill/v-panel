@@ -131,9 +131,11 @@ public sealed class DeploymentWorker(
         // Persist instance state before syncing routes (route table is computed from DB).
         instance.Status = result.NewStatus;
         instance.StatusDetail = result.Error;
+        var importInfo = instance.Import;
         if (deployment.Action == DeploymentAction.Deploy && result.Success)
         {
             instance.DeployedConfigHash = result.ConfigHash;
+            instance.DeployedProxyAlias = result.ProxyAlias;
             instance.LastDeployedAt = time.GetUtcNow();
         }
         if (deployment.Action == DeploymentAction.Remove && result.Success) instance.DeployedConfigHash = null;
@@ -142,17 +144,28 @@ public sealed class DeploymentWorker(
         string? proxyError = null;
         if (result.Success && deployment.Action is DeploymentAction.Deploy or DeploymentAction.Remove)
         {
+            // First deploy of an imported stack: its hand-written Caddy site is replaced by the generated one in the same reload.
+            // Only when the generated route exists: removing the site without a replacement would take the address offline.
+            var takeover = deployment.Action == DeploymentAction.Deploy && importInfo?.PendingTakeover is { } site
+                           && ProxyRouteService.RouteFor(instance, includePendingTakeover: true) is not null
+                ? new[] { new ManualSiteRemoval(site.File, site.Address) }
+                : null;
             try
             {
-                var sync = await proxyRoutes.SyncAsync(settings, log, ct);
+                var sync = await proxyRoutes.SyncAsync(settings, log, ct, takeover, instance.Id);
                 if (!sync.Success) proxyError = sync.Error;
+                else if (takeover is not null && importInfo is not null)
+                {
+                    instance.ImportInfoJson = (importInfo with { PendingTakeover = null }).ToJson();
+                    log.Info($"Hand-written site '{takeover[0].Address}' is now served by v-panel.");
+                }
             }
             catch (Exception ex)
             {
                 proxyError = ex.Message;
                 log.Error($"Route sync failed: {ex.Message}");
             }
-            var hasRoute = ProxyRouteService.RouteFor(instance) is not null;
+            var hasRoute = ProxyRouteService.RouteFor(instance, includePendingTakeover: true) is not null;
             if (proxyError is not null && !hasRoute)
             {
                 log.Warn("Route sync failed, but this instance has no public route; deployment is still considered successful.");

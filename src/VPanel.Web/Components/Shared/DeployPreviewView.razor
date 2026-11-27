@@ -1,0 +1,48 @@
+@using VPanel.Infrastructure.Import
+@inject StackImportService Importer
+
+@* Shows which services the next deploy would recreate (compose config hash vs. running containers). *@
+<div class="d-flex align-center gap-2">
+    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Outlined.Difference" OnClick="RunAsync" Disabled="_busy">
+        Preview deploy
+    </MudButton>
+    @if (_busy) { <MudProgressCircular Size="Size.Small" Indeterminate="true" /> }
+</div>
+@if (_preview is { Success: false })
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2" Variant="Variant.Outlined">@_preview.Error</MudAlert>
+}
+else if (_preview is not null)
+{
+    <MudAlert Severity="@(_preview.RecreatesAnything ? Severity.Warning : Severity.Success)" Dense="true" Class="mt-2" Variant="Variant.Outlined">
+        @(_preview.RecreatesAnything
+            ? "The deploy would change the services marked below (volumes and data are kept)."
+            : "No container would be recreated: the deploy only writes v-panel's files and takes over the route.")
+    </MudAlert>
+    <MudSimpleTable Dense="true" Elevation="0" Class="mt-2">
+        <thead><tr><th>Service</th><th>Action</th></tr></thead>
+        <tbody>
+            @foreach (var s in _preview.Services)
+            {
+                <tr>
+                    <td class="vp-mono">@s.Service</td>
+                    <td><MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@(s.Action == "keep" ? Color.Success : Color.Warning)">@s.Action</MudChip></td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+@code {
+    [Parameter, EditorRequired] public int InstanceId { get; set; }
+
+    private DeployPreview? _preview;
+    private bool _busy;
+
+    private async Task RunAsync()
+    {
+        _busy = true;
+        try { _preview = await Importer.PreviewDeployAsync(InstanceId); }
+        finally { _busy = false; }
+    }
+}

@@ -1,0 +1,125 @@
+@using VPanel.Infrastructure.Import
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Import '@Stack.ProjectName'</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            The stack stays where it is (<code>@Stack.WorkingDir</code>) with the same compose project, volumes and networks.
+            Nothing is restarted now; v-panel writes its files on the first deploy, after backing up the originals.
+        </MudText>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_name" Label="App name" Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_slug" Label="Slug" Variant="Variant.Outlined" Class="vp-mono-input" HelperText="Name in v-panel (the compose project stays the same)." />
+            </MudItem>
+            @if (!IsInfra)
+            {
+                <MudItem xs="12">
+                    <MudTextField @bind-Value="_publicUrl" Label="Public URL" Variant="Variant.Outlined" Class="vp-mono-input" Clearable="true"
+                                  HelperText="@(Stack.ManualSite is { } s ? $"From Caddy site '{s.Address}' ({Path.GetFileName(s.File)}:{s.Line})." : "Leave empty for no route.")" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSelect T="string" @bind-Value="_proxyService" Label="Proxy service" Variant="Variant.Outlined" Clearable="true">
+                        @foreach (var s in Stack.Services) { <MudSelectItem Value="@s.Name">@s.Name</MudSelectItem> }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudNumericField T="int?" @bind-Value="_proxyPort" Label="Proxy port" Variant="Variant.Outlined" Min="1" Max="65535" HideSpinButtons="true" />
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSwitch T="bool" @bind-Value="_tlsInternal" Color="Color.Primary" Label="tls internal (Caddy local CA)" />
+                    @if (Stack.TlsNote is { } note)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Secondary">Hand-written site: @note@(_directives is { Length: > 0 } ? "; kept through the directives below" : "")</MudText>
+                    }
+                </MudItem>
+                <MudItem xs="12" md="6">
+                    <MudSwitch T="bool" @bind-Value="_takeOver" Color="Color.Primary" Disabled="Stack.ManualSite is not { CanTakeOver: true }"
+                               Label="Take over the hand-written Caddy site on first deploy" />
+                </MudItem>
+            }
+            @if (!IsInfra)
+            {
+                <MudItem xs="12" md="7">
+                    <MudTextField T="string" @bind-Value="_directives" Label="Caddy site directives" Variant="Variant.Outlined" Lines="8" Class="vp-mono-input"
+                                  HelperText="Placed in the generated site before reverse_proxy (from the hand-written site)." />
+                </MudItem>
+                <MudItem xs="12" md="5">
+                    <MudTextField T="string" @bind-Value="_proxyOptions" Label="reverse_proxy options" Variant="Variant.Outlined" Lines="8" Class="vp-mono-input"
+                                  HelperText="Inside reverse_proxy { … }, e.g. health checks." />
+                </MudItem>
+            }
+            <MudItem xs="12">
+                <MudSelect T="BuildMode" @bind-Value="_buildMode" Label="Images" Variant="Variant.Outlined">
+                    <MudSelectItem Value="BuildMode.PullFirst">Pull first, build only missing images (like `docker compose pull && up -d`)</MudSelectItem>
+                    <MudSelectItem Value="BuildMode.Build">Always rebuild buildable services (`up --build`)</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+        @if (IsInfra)
+        {
+            <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3" Variant="Variant.Outlined">
+                Settings will be updated from this stack (shared network, Caddy container and folder, ingress), and an
+                <code>import …/sites/vp-*.caddy</code> line is added to its Caddyfile if missing (validated, backed up).
+            </MudAlert>
+        }
+        @foreach (var w in Stack.Warnings)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" Variant="Variant.Outlined">@w</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Confirm">Import</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public ScannedStack Stack { get; set; } = default!;
+
+    private bool IsInfra => Stack.Kind == StackKind.Infra;
+    private string? _name;
+    private string? _slug;
+    private string? _publicUrl;
+    private string? _proxyService;
+    private int? _proxyPort;
+    private bool _tlsInternal;
+    private bool _takeOver = true;
+    private string? _directives;
+    private string? _proxyOptions;
+    private BuildMode _buildMode;
+
+    protected override void OnInitialized()
+    {
+        _name = IsInfra ? $"Shared infrastructure ({Stack.ProjectName})" : Stack.ProjectName;
+        _slug = Stack.SuggestedSlug;
+        _publicUrl = Stack.PublicUrl;
+        _proxyService = Stack.ProxyService;
+        _proxyPort = Stack.ProxyPort;
+        _tlsInternal = Stack.TlsInternal;
+        _takeOver = Stack.ManualSite is { CanTakeOver: true };
+        _buildMode = Stack.SuggestedBuildMode;
+        _directives = Stack.ProxyDirectives;
+        _proxyOptions = Stack.ProxyOptions;
+    }
+
+    private void Confirm() => MudDialog.Close(DialogResult.Ok(new ImportRequest
+    {
+        ProjectName = Stack.ProjectName,
+        AppName = _name,
+        Slug = _slug,
+        PublicUrl = IsInfra ? null : _publicUrl ?? "",
+        ProxyService = _proxyService,
+        ProxyPort = _proxyPort,
+        TlsInternal = _tlsInternal,
+        TakeOverSite = _takeOver,
+        BuildMode = _buildMode,
+        ProxyDirectives = IsInfra ? null : _directives ?? "",
+        ProxyOptions = IsInfra ? null : _proxyOptions ?? "",
+    }));
+}

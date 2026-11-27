@@ -24,7 +24,7 @@ public sealed record InstanceOperationContext(
     string? PanelBaseUrl = null);
 
 public sealed record OperationResult(bool Success, InstanceStatus NewStatus, string? Error = null, string? ConfigHash = null,
-    string? RenderedCompose = null, string? RenderedEnv = null)
+    string? RenderedCompose = null, string? RenderedEnv = null, string? ProxyAlias = null)
 {
     public static OperationResult Fail(string error, InstanceStatus status = InstanceStatus.Failed) => new(false, status, error);
 }

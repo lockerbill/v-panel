@@ -129,7 +129,20 @@ namespace VPanel.Infrastructure.Data.Migrations
                     b.Property<int>("AppId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BuildMode")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ComposeFileName")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ComposeOverride")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ComposeProjectName")
+                        .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
                     b.Property<long>("CreatedAt")
@@ -138,11 +151,18 @@ namespace VPanel.Infrastructure.Data.Migrations
                     b.Property<string>("DeployedConfigHash")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DeployedProxyAlias")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("EnvOverrides")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ImportInfoJson")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("InstallPath")
@@ -155,6 +175,12 @@ namespace VPanel.Infrastructure.Data.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProxyDirectives")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProxyOptions")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("ProxyPort")
@@ -183,6 +209,9 @@ namespace VPanel.Infrastructure.Data.Migrations
 
                     b.Property<string>("StatusDetail")
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("TlsInternal")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");

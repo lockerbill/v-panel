@@ -48,7 +48,7 @@ Image được build đa kiến trúc (amd64/arm64): stage SDK chạy native r�
 
 - **AppDefinition** (bảng `Apps`) là template, gồm compose, `.env` (mã hoá), proxy service/port mặc định và `IsSystem` cho hạ tầng dùng chung.
 - **AppVolume** là external volume khai báo tay.
-- **AppInstance** (bảng `Instances`) là một bản deploy. Nó có slug (tên compose project là `vp-<slug>`), Public URL, thư mục cài, `.env` override (mã hoá), compose override, proxy service/port, trạng thái, `DeployedConfigHash` và `ServerId` (v1 luôn là `local`).
+- **AppInstance** (bảng `Instances`) là một bản deploy. Nó có slug (tên compose project là `vp-<slug>`, hoặc `ComposeProjectName` với stack import), Public URL, thư mục cài, `.env` override (mã hoá), compose override, proxy service/port, trạng thái, `DeployedConfigHash` và `ServerId` (v1 luôn là `local`).
 - **Deployment** là một job (Deploy/Start/Stop/Restart/Down/Remove). Mỗi job lưu log, lỗi, snapshot compose và `.env` lúc deploy, và hash cấu hình.
 - **Setting** lưu cấu hình runtime dạng JSON. **AuditLog** ghi lại ai làm gì.
 
@@ -97,6 +97,40 @@ File không có tiền tố `vp-` do người dùng tự viết và không bị 
 Bản cài cũ lưu settings không có field này nên vẫn là `Direct`. `VPanelInitializer` chỉ lưu `CloudflareTunnel` khi seed shared-infra lần đầu (DB trống), khớp với template mới không publish cổng. Đổi chế độ ở trang Settings sẽ sync lại route ngay; file `vp-*` cũ được xoá như mọi lần sync.
 
 Instance được route tới `vp-<instance>-<service>:<port>`. Đây là alias trên network `vpanel-shared`, do file override gắn vào.
+
+## Import stack có sẵn (`VPanel.Infrastructure/Import`)
+
+Mục tiêu: nhận quản lý stack cài tay từ trước mà không di chuyển dữ liệu và không recreate container khi không cần.
+
+- **Instance "adopted"**:
+  - `ComposeProjectName` giữ tên project gốc (`ProjectName` trả về giá trị này thay vì `vp-<slug>`), nên volume, network và container vẫn là những cái cũ.
+  - `InstallPath` là thư mục gốc. Thư mục đó nằm trong `VPanelOptions.AdoptedRoots`, cấu hình tĩnh vì ở chế độ container phải khớp với mount; `PathGuard.ResolveInsideAny` kiểm tra `PanelSettings.AllowedRoots`.
+  - `ComposeFileName` giữ tên file gốc, ví dụ `compose.yaml`.
+  - `ImportInfoJson` lưu file gốc, thư mục backup và site Caddy đang chờ take over.
+- **`StackScanner`** (chỉ đọc):
+  - Nguồn dữ liệu: `docker ps`/`docker inspect` (label `com.docker.compose.*`, mount, network, cổng), `docker compose ls`, cộng thêm compose file nằm trong adopted root (để bắt stack đã `down`).
+  - Với mỗi stack chạy `docker compose config --format json`.
+  - Bỏ qua project đã được quản lý, project `vpanel` và project chứa chính container v-panel.
+- **`InfraDetector`**:
+  - Stack có image `caddy` được coi là infra.
+  - Từ stack đó suy ra container Caddy, thư mục mount vào `/etc/caddy`, shared network (network của Caddy; nếu Caddy ở nhiều network thì chọn network mà nhiều stack khác cũng join) và ingress (có cloudflared và Caddy không publish 80/443 thì là tunnel).
+- **`CaddySiteParser`**:
+  - Đọc Caddyfile theo luật dấu ngoặc của Caddy: dấu ngoặc chỉ mở hoặc đóng block khi đứng thành token riêng, nên placeholder như `{remote_host}` không bị nhầm.
+  - Nhận diện site "take over được": một địa chỉ, đúng một `reverse_proxy host:port` (không matcher, không `to`), không có directive định tuyến (`handle`, `route`, `redir`, matcher `@…`...).
+  - Tách thân site thành từng directive, cắt từ text gốc nên comment được giữ: `reverse_proxy` cho ra upstream, block con của nó thành `ProxyOptions`, phần còn lại thành `ProxyDirectives`. Hai trường này được lưu trên instance và ghi lại nguyên văn vào site sinh ra (`CaddyConfigBuilder`). Khi lưu instance, `ValidateDirectives` kiểm tra ngoặc cân bằng và chặn directive định tuyến.
+  - Gỡ được một site block ra khỏi file.
+- **`StackImportService`**:
+  - Backup compose và `.env` gốc vào `.vpanel-backup/`.
+  - Tạo app (compose nguyên văn; nếu có nhiều file thì merge bằng `config --no-interpolate`) và instance qua `InstanceService` (validate như mọi instance khác), với `DeployedConfigHash = "imported"`.
+  - Status sync vẫn chạy cho instance này, nhưng `ProxyRouteService.RouteFor` không sinh route cho tới lần deploy đầu tiên.
+  - Import infra: cập nhật Settings, xoá template seed chưa deploy, `IReverseProxyProvider.EnsureIncludedAsync` thêm dòng `import …/sites/vp-*.caddy`.
+- **Lần deploy đầu**:
+  - `ComposeRenderer` dùng alias có sẵn của proxy service trên shared network (không sinh override). Nếu service đã join network đó nhưng chưa có alias thì thêm alias vào đúng key cũ.
+  - `DeploymentWorker` lưu `DeployedProxyAlias` và gọi `ProxyRouteService.SyncAsync` với `ManualSiteRemoval`. `CaddyFileProvider` ghi file `vp-*` và gỡ site viết tay trong cùng một lần validate/reload, lỗi thì rollback cả hai.
+  - Route của instance còn chờ take over bị loại khỏi mọi lần sync khác, để không có hai site cùng địa chỉ.
+- **Preview** (`PreviewDeployAsync`): render vào thư mục tạm, chạy `docker compose config --hash '*'` rồi so với label `com.docker.compose.config-hash` của container đang chạy.
+- **`BuildMode.PullFirst`**: `pull --ignore-pull-failures` rồi `up` không `--build`, cho service có cả `image:` lẫn `build:`.
+- **Installer**: `deploy/docker-install.sh --adopt` sinh `/opt/vpanel/vpanel.env` (`VPANEL_SHARED_NETWORK`) và `/opt/vpanel/docker-compose.adopt.yml` (mount cùng đường dẫn, `AdoptedRoots`, `SeedInfrastructure=false`).
 
 ## Điểm mở rộng
 

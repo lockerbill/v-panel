@@ -10,6 +10,7 @@ v-panel is a self-hosted admin panel for managing applications on a VPS. You ins
 - Shared containers (**cloudflared** + **Caddy** + **PostgreSQL 18**) are an app too, managed from v-panel itself. Public traffic goes Cloudflare → Cloudflare Tunnel → Caddy → app, so the server opens no 80/443 ports. On deploy, Caddy is configured automatically from the instance's *Public URL*.
 - Deployment history with configuration snapshots, container list, container logs, start/stop/restart/remove and an audit log.
 - An **MCP server** (`/mcp`) lets AI agents such as Claude Code or Codex drive the panel with an API token, e.g. install an app straight from a GitHub repository. See [docs/mcp.md](docs/mcp.md).
+- Installs on a **server with existing stacks**: scan it and take over the shared infrastructure (Caddy, Postgres...) and hand-made compose apps in place, without moving data. See [docs/migrate-existing-vps_EN.md](docs/migrate-existing-vps_EN.md).
 
 Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco, MCP C# SDK.
 
@@ -216,6 +217,36 @@ The **shared-infra** instance runs `postgres:18`. Since version 18 the official 
    ```bash
    docker exec -i postgres psql -U postgres < pg17-dump.sql
    ```
+
+## Installing on a server with existing stacks (import)
+
+If the server already runs shared infrastructure (Caddy, Postgres...) and app compose stacks installed by hand, v-panel can manage them **in place**: same folders, same compose project names, no new volumes.
+
+This is a summary. The full guide (preparation, backups, checks at each step, a worked example, rollback, troubleshooting) is in [docs/migrate-existing-vps_EN.md](docs/migrate-existing-vps_EN.md).
+
+1. Install in adopt mode:
+
+   ```bash
+   sudo ./deploy/docker-install.sh --adopt
+   ```
+
+   The script finds the running Caddy container and uses its network as the shared network (e.g. `proxy`). From the working folders of the existing compose projects it derives their root folders (`/opt/infra`, `/opt/n8n-arm`, `/opt/<repo>`...), mounts them into the vpanel container at the **same path** and declares them as `VPanel:AdoptedRoots`. To choose the folders yourself, pass them after the flag: `--adopt /opt/infra /opt/apps`. The choices are saved in `/opt/vpanel/vpanel.env` and `/opt/vpanel/docker-compose.adopt.yml` and reused by later upgrades.
+2. Open **Import** and press **Scan server**. The scan is read-only and touches nothing. It shows:
+   - the shared-infra stack, with the settings v-panel would adopt: network, Caddy container, Caddy folder, ingress mode;
+   - the app stacks;
+   - the hand-written Caddy sites, with the app each one routes to.
+3. Import the **shared infrastructure first**. v-panel updates Settings from it, drops the built-in `shared-infra` template (if it was never deployed) and adds `import …/sites/vp-*.caddy` to the Caddyfile when missing (backed up and validated).
+4. Import each app. Proxy service/port, Public URL and `tls internal` are suggested from its hand-written Caddy site. Its containers keep running; the original compose file and `.env` are copied to `<app folder>/.vpanel-backup/`.
+5. On each imported instance, press **Preview deploy**: it lists the services that would be recreated. Then press **Deploy** once to bring the stack fully under management. That deploy writes v-panel's files. When the Public URL was served by a hand-written Caddy site, that site is replaced by a `vp-*.caddy` file in the same reload, and the old file is moved to `<Caddy folder>/.vpanel-backup/`. Its other directives (`import common`, `header {…}`, `log`…) and its `reverse_proxy` options (health checks…) are kept verbatim.
+
+Notes:
+
+- A service that already has an alias on the shared network (`aliases: [n8n-arm]`) keeps that alias as the route upstream. v-panel generates no `docker-compose.vpanel.yml`, so the container is not recreated.
+- Stacks with both `image:` and `build:` should use **Pull first** (suggested on import). It pulls the published images and builds only the missing ones, like `docker compose pull && docker compose up -d`.
+- A site can be taken over when it has one address and exactly one `reverse_proxy host:port`. Sites that route (`handle`, `handle_path`, `route`, `redir`, `@matchers`, several upstreams) stay hand-written; leave that instance's Public URL empty.
+- The carried-over directives and options can be edited in the instance configuration (**Caddy site directives**, **reverse_proxy options**). Snippets such as `(common)` stay in the main Caddyfile and work in `vp-*.caddy` files.
+- An imported instance that was never deployed can be "Stop managing": v-panel forgets it and leaves its containers and files alone.
+- systemd mode: set `VPanel:AdoptedRoots` in `/etc/vpanel/appsettings.json` and give the `vpanel` user read/write access to those folders.
 
 ## Alternative: run with systemd
 

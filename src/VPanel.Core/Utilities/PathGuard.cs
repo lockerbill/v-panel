@@ -22,6 +22,32 @@ public static class PathGuard
         return full;
     }
 
+    /// <summary><see cref="ResolveInside"/> against several roots; the first root that contains the path wins.</summary>
+    public static string? ResolveInsideAny(IEnumerable<string> roots, string? path) =>
+        roots.Select(r => ResolveInside(r, path)).FirstOrDefault(p => p is not null);
+
+    private static readonly string[] SystemFolders =
+        ["/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/run", "/sbin", "/sys", "/usr", "/var", "/var/lib", "/var/run", "/tmp"];
+
+    private static readonly string[] ForbiddenTrees = ["/proc", "/sys", "/dev", "/etc", "/boot", "/usr", "/var/lib/docker", "/var/run", "/run"];
+
+    /// <summary>
+    /// Checks a folder proposed as an adopted root (a place where hand-installed stacks live). System folders and their
+    /// parents are refused, so a wrong setting cannot let instances (and "delete install folder") reach them.
+    /// </summary>
+    public static bool IsAcceptableAdoptedRoot(string? root, out string normalized, out string? reason)
+    {
+        normalized = "";
+        reason = null;
+        if (string.IsNullOrWhiteSpace(root) || root.Contains('\0')) { reason = "empty"; return false; }
+        if (!Path.IsPathRooted(root)) { reason = "must be an absolute path"; return false; }
+        normalized = Normalize(Path.GetFullPath(root));
+        if (SystemFolders.Contains(normalized, StringComparer.Ordinal)) { reason = "system folder"; return false; }
+        var n = normalized;
+        if (ForbiddenTrees.Any(t => IsStrictlyInside(t, n))) { reason = "inside a system folder"; return false; }
+        return true;
+    }
+
     public static bool IsStrictlyInside(string root, string path)
     {
         var r = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;

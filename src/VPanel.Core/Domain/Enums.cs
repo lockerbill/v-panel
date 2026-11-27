@@ -47,3 +47,16 @@ public enum UserRole
 {
     Admin = 0,
 }
+
+/// <summary>How a deploy obtains images.</summary>
+public enum BuildMode
+{
+    /// <summary>Pull images of services without <c>build:</c>, then <c>up --build</c> (always rebuilds buildable services).</summary>
+    Build = 0,
+
+    /// <summary>
+    /// Pull every image (pull failures ignored), then <c>up</c> without <c>--build</c>: services with both <c>image:</c> and
+    /// <c>build:</c> use the published image, and only images that are still missing are built.
+    /// </summary>
+    PullFirst = 1,
+}

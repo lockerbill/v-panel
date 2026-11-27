@@ -120,7 +120,8 @@ public sealed class DockerComposeHandlerTests : IDisposable
         var states = await Handler().GetRuntimeStatesAsync(default);
         Assert.Equal(InstanceStatus.Partial, states["vp-a"].Status);
         Assert.Equal(InstanceStatus.Running, states["vp-b"].Status);
-        Assert.False(states.ContainsKey("other"));
+        // imported stacks keep their own project names, so every project is reported
+        Assert.Equal(InstanceStatus.Running, states["other"].Status);
     }
 
     public void Dispose() => Directory.Delete(_root, true);

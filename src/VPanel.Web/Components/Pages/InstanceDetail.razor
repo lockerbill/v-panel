@@ -26,7 +26,11 @@
     <Meta>
         <div class="vp-meta">
             <StatusChip Status="_instance.Status" />
-            @if (_dirty)
+            @if (_instance.IsAwaitingFirstDeploy)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.Input">imported · not deployed by v-panel</MudChip>
+            }
+            else if (_dirty)
             {
                 <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Icon="@Icons.Material.Outlined.Pending">changes not deployed</MudChip>
             }
@@ -40,7 +44,7 @@
     </Meta>
     <Actions>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.RocketLaunch" OnClick="() => RunAsync(DeploymentAction.Deploy)" Disabled="Busy">
-            @(_instance.DeployedConfigHash is null ? "Deploy" : "Redeploy")
+            @(_instance.DeployedConfigHash is null || _instance.IsAwaitingFirstDeploy ? "Deploy" : "Redeploy")
         </MudButton>
         <MudMenu Icon="@Icons.Material.Filled.MoreVert" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight" Disabled="Busy" AriaLabel="More actions">
             <MudMenuItem Icon="@Icons.Material.Outlined.PlayArrow" OnClick="() => RunAsync(DeploymentAction.Start)" Disabled="NotDeployed">Start</MudMenuItem>
@@ -49,7 +53,9 @@
             <MudMenuItem Icon="@Icons.Material.Outlined.ArrowDownward" OnClick="() => RunAsync(DeploymentAction.Down)" Disabled="NotDeployed">Down (stop &amp; remove containers)</MudMenuItem>
             <MudDivider />
             <MudMenuItem Icon="@Icons.Material.Outlined.LayersClear" OnClick="RemoveAsync" Disabled="NotDeployed">Remove deployment…</MudMenuItem>
-            <MudMenuItem Icon="@Icons.Material.Outlined.Delete" OnClick="DeleteAsync" Disabled="CanDelete == false">Delete instance</MudMenuItem>
+            <MudMenuItem Icon="@Icons.Material.Outlined.Delete" OnClick="DeleteAsync" Disabled="CanDelete == false">
+                @(_instance.IsAwaitingFirstDeploy ? "Stop managing (keep containers)" : "Delete instance")
+            </MudMenuItem>
         </MudMenu>
     </Actions>
 </PageHeader>
@@ -65,6 +71,21 @@
     <MudAlert Severity="Severity.Warning" Class="mb-4" Variant="Variant.Outlined">@_instance.StatusDetail</MudAlert>
 }
 
+@if (_instance.IsAwaitingFirstDeploy)
+{
+    <MudAlert Severity="Severity.Info" Class="mb-4" Variant="Variant.Outlined">
+        <div>
+            Imported from <code>@_instance.InstallPath</code> (compose project <code>@_instance.ProjectName</code>). Its containers run as before;
+            v-panel has not written anything yet. Review the configuration, preview, then <b>Deploy</b> once to manage it fully.
+            @if (_instance.Import?.PendingTakeover is { } site)
+            {
+                <span> That deploy also replaces the hand-written Caddy site <code>@site.Address</code> in <code>@site.File</code> (a backup is kept).</span>
+            }
+        </div>
+        <div class="mt-2"><DeployPreviewView InstanceId="Id" /></div>
+    </MudAlert>
+}
+
 <MudPaper Outlined="true" Class="vp-card vp-card-flush">
     <MudTabs Elevation="0" ApplyEffectsToContainer="true" TabPanelsClass="pa-5" @bind-ActivePanelIndex="_tab" Border="false">
         <MudTabPanel Text="Overview" Icon="@Icons.Material.Outlined.Info">
@@ -75,6 +96,13 @@
                 <div><span>Proxy upstream</span><code>@(Upstream ?? "not routed")</code></div>
                 <div><span>Last deployed</span>@(_instance.LastDeployedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "never")</div>
                 <div><span>Server</span>@_instance.ServerId</div>
+                <div><span>Images</span>@(_instance.BuildMode == BuildMode.PullFirst ? "pull first, build missing" : "build buildable services")</div>
+                @if (_instance.Import is { } imp)
+                {
+                    <div><span>Imported</span>@imp.ImportedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") @(imp.ImportedBy is null ? "" : $"by {imp.ImportedBy}")</div>
+                    <div><span>Original files</span><code>@string.Join(", ", imp.OriginalComposeFiles)</code></div>
+                    @if (imp.BackupDir is not null) { <div><span>Backup</span><code>@imp.BackupDir</code></div> }
+                }
             </div>
 
             <div class="vp-card-header px-0 mt-4">
@@ -157,9 +185,15 @@
     private bool ActiveJob => _history.Any(d => d.Status is DeploymentStatus.Queued or DeploymentStatus.Running);
     private bool Busy => _working || ActiveJob;
     private bool NotDeployed => _instance?.DeployedConfigHash is null;
-    private bool CanDelete => _instance is { Status: InstanceStatus.Draft or InstanceStatus.Removed } || NotDeployed;
+    private bool CanDelete => _instance is { Status: InstanceStatus.Draft or InstanceStatus.Removed } || NotDeployed || _instance!.IsAwaitingFirstDeploy;
     private string? Upstream => ProxyRouteService.RouteFor(_instance!) is { } r ? r.Upstream
-        : _instance!.EffectiveProxyService is { } s && _instance.EffectiveProxyPort is { } p ? $"{VPanel.Infrastructure.Docker.ComposeRenderer.ProxyAlias(_instance, s)}:{p} (after deploy)" : null;
+        : _instance!.EffectiveProxyService is not null && _instance.EffectiveProxyPort is { } p && NextAlias() is { } alias ? $"{alias}:{p} (after deploy)" : null;
+
+    private string? NextAlias()
+    {
+        try { return VPanel.Infrastructure.Docker.ComposeRenderer.Render(_instance!, Settings.Get()).ProxyAlias; }
+        catch { return null; }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -244,7 +278,10 @@
     private async Task RemoveAsync()
     {
         var dialog = await Dialogs.ShowAsync<RemoveInstanceDialog>("Remove deployment",
-            new DialogParameters<RemoveInstanceDialog> { { x => x.InstanceName, _instance!.Name } },
+            new DialogParameters<RemoveInstanceDialog>
+            {
+                { x => x.InstanceName, _instance!.Name }, { x => x.IsImported, _instance.IsImported }, { x => x.InstallPath, _instance.InstallPath },
+            },
             new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
         var result = await dialog.Result;
         if (result is { Canceled: false, Data: RemoveOptions opts }) await RunAsync(DeploymentAction.Remove, opts);
@@ -252,7 +289,9 @@
 
     private async Task DeleteAsync()
     {
-        var ok = await Dialogs.ShowMessageBoxAsync("Delete instance", $"Delete instance '{_instance!.Name}' and its deployment history?", yesText: "Delete", cancelText: "Cancel");
+        var ok = _instance!.IsAwaitingFirstDeploy
+            ? await Dialogs.ShowMessageBoxAsync("Stop managing", $"Forget the imported stack '{_instance.Name}'? Its containers, files and Caddy site are left untouched; it can be imported again.", yesText: "Stop managing", cancelText: "Cancel")
+            : await Dialogs.ShowMessageBoxAsync("Delete instance", $"Delete instance '{_instance.Name}' and its deployment history?", yesText: "Delete", cancelText: "Cancel");
         if (ok != true) return;
         var r = await InstanceSvc.DeleteAsync(Id, await Me.NameAsync());
         if (!r.Success) { _errors = r.Errors.ToList(); return; }

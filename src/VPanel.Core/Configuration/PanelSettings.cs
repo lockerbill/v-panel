@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace VPanel.Core.Configuration;
 
 /// <summary>Static configuration bound from appsettings ("VPanel" section).</summary>
@@ -25,6 +27,16 @@ public class VPanelOptions
 
     /// <summary>Interval for syncing instance status from Docker.</summary>
     public TimeSpan StatusSyncInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Folders outside <see cref="PanelSettings.AppsRoot"/> holding stacks installed before v-panel (e.g. /opt/infra).
+    /// Imported instances keep their folder there. In container mode each one must be mounted at the same path.
+    /// Static (not editable in the UI) because it has to match the container's mounts.
+    /// </summary>
+    public string[] AdoptedRoots { get; set; } = [];
+
+    /// <summary>Configured adopted roots that were refused (system folders, the data folder...), with the reason.</summary>
+    public List<string> RejectedAdoptedRoots { get; } = [];
 }
 
 /// <summary>Runtime settings (defaults from config, overridable from the Settings page).</summary>
@@ -57,6 +69,14 @@ public record PanelSettings
 
     /// <summary>Upstream used for the v-panel route, as seen from the Caddy container.</summary>
     public string PanelUpstream { get; init; } = "host.docker.internal:5080";
+
+    /// <summary>Copy of <see cref="VPanelOptions.AdoptedRoots"/> (filled in by the settings service, never saved).</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> AdoptedRoots { get; init; } = [];
+
+    /// <summary>Folders an instance install path may live in.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> AllowedRoots => [AppsRoot, .. AdoptedRoots];
 
     public string CaddySitesDir => Path.Combine(CaddyDir, "sites");
     public string CaddyMainFile => Path.Combine(CaddyDir, "Caddyfile");

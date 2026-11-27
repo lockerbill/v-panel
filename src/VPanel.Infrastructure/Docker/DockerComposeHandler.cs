@@ -28,9 +28,9 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
     public async Task<OperationResult> ExecuteAsync(DeploymentAction action, InstanceOperationContext ctx, RemoveOptions? removeOptions, CancellationToken ct)
     {
         var instance = ctx.Instance;
-        var dir = PathGuard.ResolveInside(ctx.Settings.AppsRoot, instance.InstallPath);
+        var dir = PathGuard.ResolveInsideAny(ctx.Settings.AllowedRoots, instance.InstallPath);
         if (dir is null)
-            return OperationResult.Fail($"Install path '{instance.InstallPath}' must be inside apps root '{ctx.Settings.AppsRoot}'.");
+            return OperationResult.Fail($"Install path '{instance.InstallPath}' must be inside one of: {string.Join(", ", ctx.Settings.AllowedRoots)}.");
 
         return action switch
         {
@@ -63,7 +63,8 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
         // 1. write files
         log.Info($"Writing files to {dir}");
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(Path.Combine(dir, RenderedInstance.ComposeFile), rendered.Compose, ct);
+        var composeFile = instance.EffectiveComposeFile;
+        await File.WriteAllTextAsync(Path.Combine(dir, composeFile), rendered.Compose, ct);
         var envPath = Path.Combine(dir, RenderedInstance.EnvFileName);
         await File.WriteAllTextAsync(envPath, rendered.Env, ct);
         TrySetOwnerOnly(envPath);
@@ -78,7 +79,7 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
 
         // 3. validate with docker + resolve model
         log.Info("Validating with `docker compose config`");
-        var config = await docker.RunAsync(DockerCli.ComposeArgs(instance.ProjectName, dir, withOverride, "config", "--format", "json"),
+        var config = await docker.RunAsync(DockerCli.ComposeArgs(instance.ProjectName, dir, composeFile, withOverride, "config", "--format", "json"),
             workingDir: dir, timeout: ShortTimeout, ct: ct);
         if (!config.Success)
         {
@@ -105,20 +106,22 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
         foreach (var vol in model.NamedVolumes) log.Info($"Volume '{vol}' will be created by docker compose if missing");
 
         // 5. pull + up
-        log.Info("Pulling images");
-        var pull = await docker.RunAsync(DockerCli.ComposeArgs(instance.ProjectName, dir, withOverride, "pull", "--ignore-buildable"),
+        var pullFirst = instance.BuildMode == BuildMode.PullFirst;
+        log.Info(pullFirst ? "Pulling images (build mode: pull first, build only missing images)" : "Pulling images");
+        string[] pullArgs = pullFirst ? ["pull", "--ignore-pull-failures"] : ["pull", "--ignore-buildable"];
+        var pull = await docker.RunAsync(DockerCli.ComposeArgs(instance.ProjectName, dir, composeFile, withOverride, pullArgs),
             log.Output, dir, PullTimeout, ct);
         if (!pull.Success) log.Warn("Image pull reported errors; continuing with locally available images.");
 
         log.Info("Starting containers (docker compose up -d)");
         var upArgs = new List<string> { "up", "-d", "--remove-orphans" };
-        if (model.HasBuild) upArgs.Add("--build");
-        var up = await docker.RunAsync(DockerCli.ComposeArgs(instance.ProjectName, dir, withOverride, [.. upArgs]), log.Output, dir, UpTimeout, ct);
+        if (model.HasBuild && !pullFirst) upArgs.Add("--build");
+        var up = await docker.RunAsync(DockerCli.ComposeArgs(instance.ProjectName, dir, composeFile, withOverride, [.. upArgs]), log.Output, dir, UpTimeout, ct);
         if (!up.Success) return Fail($"docker compose up failed (exit {up.ExitCode}).", rendered);
 
-        var status = await QueryStatusAsync(instance.ProjectName, dir, withOverride, ct);
+        var status = await QueryStatusAsync(instance.ProjectName, dir, composeFile, withOverride, ct);
         log.Info($"Instance status: {status}");
-        return new OperationResult(true, status, null, rendered.ConfigHash, rendered.Compose, rendered.Env);
+        return new OperationResult(true, status, null, rendered.ConfigHash, rendered.Compose, rendered.Env, rendered.ProxyAlias);
     }
 
     private static OperationResult Fail(string error, RenderedInstance r) =>
@@ -126,27 +129,29 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
 
     private async Task<OperationResult> SimpleAsync(InstanceOperationContext ctx, string dir, InstanceStatus okStatus, CancellationToken ct, params string[] command)
     {
-        if (!File.Exists(Path.Combine(dir, RenderedInstance.ComposeFile)))
+        var composeFile = ctx.Instance.EffectiveComposeFile;
+        if (!File.Exists(Path.Combine(dir, composeFile)))
             return OperationResult.Fail("Instance has not been deployed yet (no compose file in install path).", ctx.Instance.Status);
         var withOverride = File.Exists(Path.Combine(dir, RenderedInstance.OverrideFile));
         ctx.Log.Info($"docker compose {string.Join(' ', command)}");
-        var r = await docker.RunAsync(DockerCli.ComposeArgs(ctx.Instance.ProjectName, dir, withOverride, command), ctx.Log.Output, dir, UpTimeout, ct);
+        var r = await docker.RunAsync(DockerCli.ComposeArgs(ctx.Instance.ProjectName, dir, composeFile, withOverride, command), ctx.Log.Output, dir, UpTimeout, ct);
         if (!r.Success) return OperationResult.Fail($"docker compose {command[0]} failed (exit {r.ExitCode}).", ctx.Instance.Status);
         // After an explicit stop/down the exit codes (e.g. 2 or 143 on SIGTERM) are not failures.
-        var status = okStatus == InstanceStatus.Stopped ? InstanceStatus.Stopped : await QueryStatusAsync(ctx.Instance.ProjectName, dir, withOverride, ct);
+        var status = okStatus == InstanceStatus.Stopped ? InstanceStatus.Stopped : await QueryStatusAsync(ctx.Instance.ProjectName, dir, composeFile, withOverride, ct);
         return new OperationResult(true, status);
     }
 
     private async Task<OperationResult> RemoveAsync(InstanceOperationContext ctx, string dir, RemoveOptions opts, CancellationToken ct)
     {
         var log = ctx.Log;
-        if (File.Exists(Path.Combine(dir, RenderedInstance.ComposeFile)))
+        var composeFile = ctx.Instance.EffectiveComposeFile;
+        if (File.Exists(Path.Combine(dir, composeFile)))
         {
             var withOverride = File.Exists(Path.Combine(dir, RenderedInstance.OverrideFile));
             var args = new List<string> { "down", "--remove-orphans" };
             if (opts.DeleteVolumes) args.Add("--volumes");
             log.Info($"docker compose {string.Join(' ', args)}");
-            var r = await docker.RunAsync(DockerCli.ComposeArgs(ctx.Instance.ProjectName, dir, withOverride, [.. args]), log.Output, dir, UpTimeout, ct);
+            var r = await docker.RunAsync(DockerCli.ComposeArgs(ctx.Instance.ProjectName, dir, composeFile, withOverride, [.. args]), log.Output, dir, UpTimeout, ct);
             if (!r.Success) return OperationResult.Fail($"docker compose down failed (exit {r.ExitCode}).", ctx.Instance.Status);
         }
         else
@@ -163,9 +168,9 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
         return new OperationResult(true, InstanceStatus.Removed);
     }
 
-    private async Task<InstanceStatus> QueryStatusAsync(string project, string dir, bool withOverride, CancellationToken ct)
+    private async Task<InstanceStatus> QueryStatusAsync(string project, string dir, string composeFile, bool withOverride, CancellationToken ct)
     {
-        var r = await docker.RunAsync(DockerCli.ComposeArgs(project, dir, withOverride, "ps", "--all", "--format", "json"), workingDir: dir, timeout: ShortTimeout, ct: ct);
+        var r = await docker.RunAsync(DockerCli.ComposeArgs(project, dir, composeFile, withOverride, "ps", "--all", "--format", "json"), workingDir: dir, timeout: ShortTimeout, ct: ct);
         if (!r.Success) return InstanceStatus.Failed;
         return Summarize(ParsePs(r.StdOut).Select(c => (c.State, c.ExitCode)).ToList());
     }
@@ -212,14 +217,15 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
 
     public async Task StreamLogsAsync(AppInstance instance, PanelSettings settings, int tail, bool follow, Action<string> onLine, CancellationToken ct)
     {
-        var dir = PathGuard.ResolveInside(settings.AppsRoot, instance.InstallPath);
-        if (dir is null || !File.Exists(Path.Combine(dir, RenderedInstance.ComposeFile)))
+        var dir = PathGuard.ResolveInsideAny(settings.AllowedRoots, instance.InstallPath);
+        var composeFile = instance.EffectiveComposeFile;
+        if (dir is null || !File.Exists(Path.Combine(dir, composeFile)))
         {
             onLine("(instance has not been deployed)");
             return;
         }
         var withOverride = File.Exists(Path.Combine(dir, RenderedInstance.OverrideFile));
-        var args = DockerCli.ComposeArgs(instance.ProjectName, dir, withOverride, "logs", "--no-color", "--timestamps", "--tail", tail.ToString());
+        var args = DockerCli.ComposeArgs(instance.ProjectName, dir, composeFile, withOverride, "logs", "--no-color", "--timestamps", "--tail", tail.ToString());
         if (follow) args.Add("--follow");
         try
         {
@@ -235,7 +241,8 @@ public sealed class DockerComposeHandler(DockerCli docker, ILogger<DockerCompose
         if (!r.Success) throw new InvalidOperationException("docker ps failed: " + r.StdErr.Trim());
         return r.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.Split('\t'))
-            .Where(p => p.Length >= 2 && p[0].StartsWith("vp-", StringComparison.Ordinal))
+            // every compose project: instances imported from existing stacks keep their own project names
+            .Where(p => p.Length >= 2 && p[0].Length > 0)
             .GroupBy(p => p[0], p => (State: p[1], ExitCode: p.Length > 2 ? ExitCodeFromStatus(p[2]) : null))
             .ToDictionary(g => g.Key, g =>
             {

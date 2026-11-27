@@ -6,8 +6,14 @@
         <MudText Typo="Typo.body2" Class="mb-3">
             Runs <code>docker compose down</code> and removes the public route. The instance definition is kept, so you can deploy it again.
         </MudText>
+        @if (IsImported)
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+                This stack was imported: its install folder <code>@InstallPath</code> is the original folder (data, configuration, backups).
+            </MudAlert>
+        }
         <MudCheckBox T="bool" @bind-Value="_deleteVolumes" Color="Color.Error" Label="Also delete named volumes (all data of this instance)" />
-        <MudCheckBox T="bool" @bind-Value="_deleteFiles" Color="Color.Error" Label="Also delete the install folder" />
+        <MudCheckBox T="bool" @bind-Value="_deleteFiles" Color="Color.Error" Label="@(IsImported ? "Also delete the ORIGINAL install folder" : "Also delete the install folder")" />
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="() => MudDialog.Cancel()">Cancel</MudButton>
@@ -18,6 +24,8 @@
 @code {
     [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public string InstanceName { get; set; } = "";
+    [Parameter] public bool IsImported { get; set; }
+    [Parameter] public string? InstallPath { get; set; }
 
     private bool _deleteVolumes;
     private bool _deleteFiles;

@@ -41,7 +41,12 @@ public static partial class CaddyConfigBuilder
 
         var files = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (address, entries) in sites.OrderBy(s => s.Key, StringComparer.Ordinal))
-            files[FileName(address)] = BuildSite(address, entries);
+        {
+            // Internal CA (hosts without public DNS/certificates). Plain-HTTP sites (tunnel mode, http://) have no TLS at all.
+            var tlsInternal = !address.StartsWith("http://", StringComparison.Ordinal) && entries.Any(e => e.Route.TlsInternal)
+                              && !entries.Any(e => CaddySiteParser.HandlesTls(e.Route.Directives));
+            files[FileName(address)] = BuildSite(address, entries, tlsInternal);
+        }
         return files;
     }
 
@@ -66,12 +71,20 @@ public static partial class CaddyConfigBuilder
 
     private sealed record SiteEntry(string Prefix, ProxyRoute Route, bool ForwardHttps);
 
-    private static string BuildSite(string address, List<SiteEntry> entries)
+    private static string BuildSite(string address, List<SiteEntry> entries, bool tlsInternal)
     {
         var sb = new StringBuilder();
         sb.Append("# Managed by v-panel. Do not edit: regenerated on every deploy.\n");
         foreach (var e in entries) sb.Append("# route ").Append(e.Route.Id).Append(" -> ").Append(e.Route.Upstream).Append('\n');
         sb.Append(address).Append(" {\n");
+        if (tlsInternal) sb.Append("\ttls internal\n");
+        // Extra directives (e.g. carried over from a hand-written site): site level, once per distinct text.
+        var directives = entries.Select(e => e.Route.Directives?.Trim('\n')).Where(d => !string.IsNullOrWhiteSpace(d)).Distinct().ToList();
+        foreach (var d in directives)
+        {
+            AppendIndented(sb, "\t", d!);
+            sb.Append('\n');
+        }
 
         // longest prefix first; a duplicate prefix keeps the first route
         var ordered = entries.GroupBy(e => e.Prefix).Select(g => g.First()).OrderByDescending(e => e.Prefix.Length).ToList();
@@ -103,16 +116,27 @@ public static partial class CaddyConfigBuilder
     private static void AppendReverseProxy(StringBuilder sb, string indent, SiteEntry e)
     {
         sb.Append(indent).Append("reverse_proxy ").Append(e.Route.Upstream);
-        if (!e.ForwardHttps)
+        var options = e.Route.ProxyOptions?.Trim('\n');
+        if (!e.ForwardHttps && string.IsNullOrWhiteSpace(options))
         {
             sb.Append('\n');
             return;
         }
+        sb.Append(" {\n");
+        if (!string.IsNullOrWhiteSpace(options)) AppendIndented(sb, indent + "\t", options);
         // Caddy sees plain HTTP from cloudflared and would otherwise send "X-Forwarded-Proto: http": apps that
         // enforce HTTPS would redirect forever. The visitor used https at Cloudflare's edge.
-        sb.Append(" {\n");
-        sb.Append(indent).Append("\theader_up X-Forwarded-Proto https\n");
+        if (e.ForwardHttps) sb.Append(indent).Append("\theader_up X-Forwarded-Proto https\n");
         sb.Append(indent).Append("}\n");
+    }
+
+    private static void AppendIndented(StringBuilder sb, string indent, string text)
+    {
+        foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (line.Trim().Length == 0) sb.Append('\n');
+            else sb.Append(indent).Append(line).Append('\n');
+        }
     }
 
     public static string MainCaddyfile(string configDirInContainer) =>

@@ -9,7 +9,7 @@
     </MudItem>
     <MudItem xs="12" md="6">
         <MudTextField @bind-Value="Model.Slug" Label="Slug" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="Locked"
-                      HelperText="@($"Compose project: vp-{Model.Slug}" + (Locked ? " (fixed after deploy)" : ""))" />
+                      HelperText="@SlugHelp" />
     </MudItem>
     <MudItem xs="12">
         <MudTextField @bind-Value="Model.Description" Label="Description" Variant="Variant.Outlined" />
@@ -19,8 +19,8 @@
                       Placeholder="https://procurement-01.example.com" HelperText="Caddy routes this host (and optional path) to the proxy service. Leave empty for internal-only apps." />
     </MudItem>
     <MudItem xs="12" md="6">
-        <MudTextField @bind-Value="Model.InstallPath" Label="Install folder" Variant="Variant.Outlined" Class="vp-mono-input"
-                      HelperText="@($"Must be inside {Settings.Get().AppsRoot}")" />
+        <MudTextField @bind-Value="Model.InstallPath" Label="Install folder" Variant="Variant.Outlined" Class="vp-mono-input" Disabled="Model.IsImported"
+                      HelperText="@(Model.IsImported ? "Folder of the imported stack (kept in place)." : $"Must be inside {string.Join(" or ", Settings.Get().AllowedRoots)}")" />
     </MudItem>
     <MudItem xs="12" md="6">
         <MudAutocomplete T="string" @bind-Value="Model.ProxyService" Label="Proxy service" Variant="Variant.Outlined" Clearable="true" CoerceValue="true"
@@ -32,6 +32,25 @@
         <MudNumericField T="int?" @bind-Value="Model.ProxyPort" Label="Proxy port" Variant="Variant.Outlined" Min="1" Max="65535" HideSpinButtons="true"
                          Placeholder="@(Model.App?.DefaultProxyPort?.ToString() is { } p ? $"{p} (app default)" : null)"
                          HelperText="Container port of the proxy service. Empty = app default." />
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudSelect T="BuildMode" @bind-Value="Model.BuildMode" Label="Images" Variant="Variant.Outlined"
+                   HelperText="How deploy gets images for services that have both image: and build:.">
+            <MudSelectItem Value="BuildMode.Build">Build: pull plain images, always rebuild buildable services (up --build)</MudSelectItem>
+            <MudSelectItem Value="BuildMode.PullFirst">Pull first: pull every image, build only what is missing</MudSelectItem>
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" md="6" Class="d-flex align-center">
+        <MudSwitch T="bool" @bind-Value="Model.TlsInternal" Color="Color.Primary"
+                   Label="Caddy internal CA (tls internal) for this host: for internal names without public certificates" />
+    </MudItem>
+    <MudItem xs="12" md="7">
+        <MudTextField T="string" @bind-Value="Model.ProxyDirectives" Label="Caddy site directives (optional)" Variant="Variant.Outlined" Lines="6" Class="vp-mono-input"
+                      HelperText="Extra directives in the generated site, before reverse_proxy: e.g. import common, header { … }. No routing (handle, redir, matchers)." />
+    </MudItem>
+    <MudItem xs="12" md="5">
+        <MudTextField T="string" @bind-Value="Model.ProxyOptions" Label="reverse_proxy options (optional)" Variant="Variant.Outlined" Lines="6" Class="vp-mono-input"
+                      HelperText="Inside reverse_proxy { … }: e.g. health_uri /health. No 'to'." />
     </MudItem>
 
     <MudItem xs="12">
@@ -85,7 +104,11 @@
     private RenderedInstance? _preview;
     private int _initializedFor = -1;
 
-    private bool Locked => Model.DeployedConfigHash is not null && Model.Status != InstanceStatus.Removed;
+    private bool Locked => Model.DeployedConfigHash is not null && Model.Status != InstanceStatus.Removed && !Model.IsImported;
+
+    private string SlugHelp => Model.IsImported
+        ? $"Compose project: {Model.ProjectName} (kept from the imported stack)"
+        : $"Compose project: vp-{Model.Slug}" + (Locked ? " (fixed after deploy)" : "");
 
     protected override void OnParametersSet()
     {

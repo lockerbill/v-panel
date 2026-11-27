@@ -1,0 +1,232 @@
+@page "/import"
+@using VPanel.Infrastructure.Import
+@using VPanel.Core.Configuration
+@inject StackScanner Scanner
+@inject StackImportService Importer
+@inject SettingsService SettingsSvc
+@inject CurrentUser Me
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<PageTitle>Import · v-panel</PageTitle>
+
+<PageHeader Title="Import existing stacks"
+            Subtitle="Find compose stacks installed before v-panel (shared infrastructure and apps) and manage them in place, without moving data.">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Search" OnClick="ScanAsync" Disabled="_busy">Scan server</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_busy) { <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" /> }
+
+@if (_outcome is not null)
+{
+    <MudAlert Severity="Severity.Success" Class="mb-4" Variant="Variant.Outlined" ShowCloseIcon="true" CloseIconClicked="() => _outcome = null">
+        <div><b>Imported '@_outcome.Instance.Name'.</b> <MudLink Href="@($"/instances/{_outcome.Instance.Id}")">Open the instance</MudLink> to preview and deploy it.</div>
+        <ul class="mt-1">@foreach (var n in _outcome.Notes) { <li>@n</li> }</ul>
+    </MudAlert>
+}
+@if (_errors.Count > 0)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Outlined" ShowCloseIcon="true" CloseIconClicked="() => _errors.Clear()">
+        @foreach (var e in _errors) { <div>@e</div> }
+    </MudAlert>
+}
+
+@if (_scan is null)
+{
+    <MudPaper Outlined="true" Class="vp-card pa-5">
+        <MudText Typo="Typo.body1" Class="mb-2">How it works</MudText>
+        <ol class="vp-muted">
+            <li>Scan lists compose projects found in Docker and compose files under the adopted roots (<code>@string.Join(", ", AdoptedRoots)</code>).</li>
+            <li>Import the shared infrastructure (the stack running Caddy) first: v-panel adopts its network, Caddy container and folder.</li>
+            <li>Import each app. Its folder, compose project, volumes and networks stay the same; nothing is restarted.</li>
+            <li>On each imported instance: preview, then deploy once. Hand-written Caddy sites are replaced by generated ones in that deploy.</li>
+        </ol>
+    </MudPaper>
+    return;
+}
+
+@if (!_scan.DockerReachable)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Docker is not reachable: @_scan.Error</MudAlert>
+    return;
+}
+
+@foreach (var w in _scan.Warnings)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2" Variant="Variant.Outlined">@w</MudAlert>
+}
+
+<MudPaper Outlined="true" Class="vp-card pa-5 mb-4">
+    <div class="vp-card-header px-0 pt-0">
+        <MudText Typo="Typo.h6">Shared infrastructure</MudText>
+        @if (InfraStack is { } infraStack)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small" StartIcon="@Icons.Material.Outlined.Input"
+                       Disabled="!infraStack.CanImport || _busy" OnClick="() => ImportAsync(infraStack)">Import '@infraStack.ProjectName'</MudButton>
+        }
+    </div>
+    @if (_scan.Infra is { } infra)
+    {
+        <MudSimpleTable Dense="true" Elevation="0">
+            <thead><tr><th>Setting</th><th>Detected</th><th>Current</th></tr></thead>
+            <tbody>
+                @Row("Stack folder", InfraStack?.WorkingDir, null)
+                @Row("Shared network", infra.SharedNetwork, _settings.SharedNetwork)
+                @Row("Caddy container", infra.CaddyContainer + (infra.CaddyRunning ? "" : " (not running)"), _settings.CaddyContainer)
+                @Row("Caddy folder (host)", infra.CaddyDir, _settings.CaddyDir)
+                @Row("Caddy folder (container)", infra.CaddyConfigDirInContainer, _settings.CaddyConfigDirInContainer)
+                @Row("Public ingress", infra.Ingress.ToString(), _settings.Ingress.ToString())
+                @if (infra.PostgresService is not null)
+                {
+                    @Row("PostgreSQL", $"service {infra.PostgresService} on '{infra.PostgresNetwork}'" + (infra.PostgresAliases.Count > 0 ? $" as {string.Join(", ", infra.PostgresAliases)}" : ""), null)
+                }
+            </tbody>
+        </MudSimpleTable>
+        @foreach (var w in infra.Warnings.Concat(InfraStack?.Warnings ?? []))
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2" Variant="Variant.Outlined">@w</MudAlert>
+        }
+    }
+    else if (_scan.InfraManaged)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">Managed by v-panel already.</MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">No unmanaged stack running Caddy was found. Deploy the built-in <code>shared-infra</code> instance, or set up Caddy in Settings.</MudText>
+    }
+    @if (_scan.ManualSites.Count > 0)
+    {
+        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">Hand-written Caddy sites</MudText>
+        <MudSimpleTable Dense="true" Elevation="0">
+            <thead><tr><th>Address</th><th>Upstream</th><th>File</th><th>Can take over</th></tr></thead>
+            <tbody>
+                @foreach (var s in _scan.ManualSites)
+                {
+                    <tr>
+                        <td class="vp-mono">@s.Address @(s.TlsInternal ? "(tls internal)" : "")</td>
+                        <td class="vp-mono">@(s.Upstream ?? "-")</td>
+                        <td class="vp-mono vp-small">@s.File:@s.Line</td>
+                        <td>@(s.CanTakeOver ? (s.Directives is null && s.ProxyOptions is null ? "yes" : "yes, keeping its directives") : $"no ({s.Reason})")</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+</MudPaper>
+
+<MudPaper Outlined="true" Class="vp-card vp-card-flush">
+    <MudTable T="ScannedStack" Items="AppStacks" Dense="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+        <ToolBarContent><MudText Typo="Typo.h6">Apps</MudText></ToolBarContent>
+        <HeaderContent>
+            <MudTh>Compose project</MudTh><MudTh>Services</MudTh><MudTh>Status</MudTh><MudTh>Route</MudTh><MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Compose project">
+                <b>@context.ProjectName</b>
+                <div class="vp-muted vp-mono vp-small">@(context.WorkingDir ?? "folder unknown")</div>
+            </MudTd>
+            <MudTd DataLabel="Services" Class="vp-small">
+                @foreach (var s in context.Services)
+                {
+                    <div><span class="vp-mono">@s.Name</span> <span class="vp-muted">@(s.Image ?? "build")</span></div>
+                }
+            </MudTd>
+            <MudTd DataLabel="Status"><StatusChip Status="context.RuntimeStatus" /></MudTd>
+            <MudTd DataLabel="Route" Class="vp-small">
+                @if (context.PublicUrl is not null)
+                {
+                    <div class="vp-mono">@context.PublicUrl</div>
+                }
+                @if (context.ProxyService is not null)
+                {
+                    <div class="vp-muted vp-mono">→ @context.ProxyService:@(context.ProxyPort?.ToString() ?? "?")</div>
+                }
+            </MudTd>
+            <MudTd>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Outlined.Input"
+                           Disabled="@(!context.CanImport || InfraPending || _busy)" OnClick="() => ImportAsync(context)">Import</MudButton>
+            </MudTd>
+        </RowTemplate>
+        <ChildRowContent>
+            @if (context.Warnings.Count > 0 || context.ConfigError is not null)
+            {
+                <MudTr>
+                    <td colspan="5" class="px-4 pb-2">
+                        @if (context.ConfigError is not null) { <div class="vp-small" style="color:var(--mud-palette-error)">docker compose config: @context.ConfigError</div> }
+                        @foreach (var w in context.Warnings) { <div class="vp-small vp-muted">⚠ @w</div> }
+                    </td>
+                </MudTr>
+            }
+        </ChildRowContent>
+        <NoRecordsContent><div class="vp-empty vp-empty-sm">No unmanaged app stacks found.</div></NoRecordsContent>
+    </MudTable>
+</MudPaper>
+@if (InfraPending)
+{
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">Import the shared infrastructure first: apps are routed through its network.</MudText>
+}
+@if (_scan.ManagedProjects.Count > 0)
+{
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-3">Already managed: <span class="vp-mono">@string.Join(", ", _scan.ManagedProjects)</span></MudText>
+}
+
+@code {
+    private ScanResult? _scan;
+    private ImportOutcome? _outcome;
+    private List<string> _errors = [];
+    private bool _busy;
+    private PanelSettings _settings = default!;
+
+    private IReadOnlyList<string> AdoptedRoots => _settings.AdoptedRoots.Count == 0 ? ["none configured"] : _settings.AdoptedRoots;
+    private ScannedStack? InfraStack => _scan?.Stacks.FirstOrDefault(s => s.Kind == StackKind.Infra);
+    private IEnumerable<ScannedStack> AppStacks => _scan?.Stacks.Where(s => s.Kind == StackKind.App) ?? [];
+    private bool InfraPending => _scan?.Infra is { SharedNetwork: { } net } && net != _settings.SharedNetwork;
+
+    protected override void OnInitialized() => _settings = SettingsSvc.Get();
+
+    private async Task ScanAsync()
+    {
+        _busy = true;
+        try
+        {
+            _scan = await Scanner.ScanAsync();
+            _settings = SettingsSvc.Get();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ImportAsync(ScannedStack stack)
+    {
+        var dialog = await Dialogs.ShowAsync<ImportStackDialog>("Import stack",
+            new DialogParameters<ImportStackDialog> { { x => x.Stack, stack } },
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true });
+        var result = await dialog.Result;
+        if (result is not { Canceled: false, Data: ImportRequest request }) return;
+        _busy = true;
+        try
+        {
+            var r = await Importer.ImportAsync(request, await Me.NameAsync());
+            _errors = r.Errors.ToList();
+            if (r.Success)
+            {
+                _outcome = r.Value;
+                Snackbar.Add($"Imported {stack.ProjectName}.", Severity.Success);
+            }
+        }
+        finally { _busy = false; }
+        await ScanAsync();
+    }
+
+    private static RenderFragment Row(string label, string? detected, string? current) => __builder =>
+    {
+        var differs = current is not null && detected is not null && detected != current;
+        <tr>
+            <td>@label</td>
+            <td class="vp-mono">@(detected ?? "-")</td>
+            <td class="vp-mono @(differs ? "vp-muted" : "")">@(current ?? "")@(differs ? " → will change" : "")</td>
+        </tr>
+    };
+}
