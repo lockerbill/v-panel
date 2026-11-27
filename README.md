@@ -10,6 +10,7 @@ v-panel là admin panel tự host để quản lý ứng dụng trên một VPS.
 - Container dùng chung (**cloudflared** + **Caddy** + **PostgreSQL 18**) cũng là một app và được quản lý ngay trên v-panel. Web public đi theo đường Cloudflare → Cloudflare Tunnel → Caddy → app, nên server không phải mở cổng 80/443. Khi deploy, Caddy được cấu hình tự động theo *Public URL* của instance.
 - Có lịch sử deploy kèm snapshot cấu hình, danh sách container, log container, start/stop/restart/remove và audit log.
 - Có **MCP server** (`/mcp`) để AI agent như Claude Code, Codex điều khiển panel bằng API token, ví dụ tự cài một app từ GitHub repo. Xem [docs/mcp.md](docs/mcp.md).
+- Cài được lên **VPS đã có sẵn stack**: scan rồi nhận quản lý tại chỗ shared-infra (Caddy, Postgres...) và các app compose cài tay, không di chuyển dữ liệu. Xem [docs/migrate-existing-vps.md](docs/migrate-existing-vps.md).
 
 Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco, MCP C# SDK.
 
@@ -220,6 +221,8 @@ Instance **shared-infra** chạy image `postgres:18`. Từ bản 18, image chín
 ## Cài lên VPS đã có sẵn stack (import)
 
 Nếu VPS đã có shared-infra (Caddy, Postgres...) và các app docker compose cài tay từ trước, v-panel có thể nhận quản lý chúng **tại chỗ**: không di chuyển thư mục, không đổi tên compose project, không tạo volume mới.
+
+Dưới đây là tóm tắt. Hướng dẫn đầy đủ (chuẩn bị, backup, kiểm tra từng bước, ví dụ cụ thể, rollback, xử lý sự cố) ở [docs/migrate-existing-vps.md](docs/migrate-existing-vps.md).
 
 1. Cài v-panel ở chế độ adopt:
 

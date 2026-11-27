@@ -10,6 +10,7 @@ v-panel is a self-hosted admin panel for managing applications on a VPS. You ins
 - Shared containers (**cloudflared** + **Caddy** + **PostgreSQL 18**) are an app too, managed from v-panel itself. Public traffic goes Cloudflare → Cloudflare Tunnel → Caddy → app, so the server opens no 80/443 ports. On deploy, Caddy is configured automatically from the instance's *Public URL*.
 - Deployment history with configuration snapshots, container list, container logs, start/stop/restart/remove and an audit log.
 - An **MCP server** (`/mcp`) lets AI agents such as Claude Code or Codex drive the panel with an API token, e.g. install an app straight from a GitHub repository. See [docs/mcp.md](docs/mcp.md).
+- Installs on a **server with existing stacks**: scan it and take over the shared infrastructure (Caddy, Postgres...) and hand-made compose apps in place, without moving data. See [docs/migrate-existing-vps_EN.md](docs/migrate-existing-vps_EN.md).
 
 Stack: .NET 10, Blazor Server, MudBlazor, EF Core + SQLite, YamlDotNet, BlazorMonaco, MCP C# SDK.
 
@@ -220,6 +221,8 @@ The **shared-infra** instance runs `postgres:18`. Since version 18 the official 
 ## Installing on a server with existing stacks (import)
 
 If the server already runs shared infrastructure (Caddy, Postgres...) and app compose stacks installed by hand, v-panel can manage them **in place**: same folders, same compose project names, no new volumes.
+
+This is a summary. The full guide (preparation, backups, checks at each step, a worked example, rollback, troubleshooting) is in [docs/migrate-existing-vps_EN.md](docs/migrate-existing-vps_EN.md).
 
 1. Install in adopt mode:
 
